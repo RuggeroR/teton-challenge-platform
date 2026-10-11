@@ -19,6 +19,7 @@ Rules:
 - **Do not change a decision silently.** If implementation shows a decision in `plan_v4.md` is wrong or impossible, stop and explain the problem to the owner. Once agreed, record it in a new `docs/plan_v5.md` (copy v4, add a changelog row) and update SPEC/DESIGN to match.
 - Work in the scope order from SPEC §12: **MUST**, then SHOULD, then COULD. Don't build COULD items unless asked.
 - The owner wants to understand every part. Explain non-obvious choices in the PR description or in a short comment, and keep the code simple over clever.
+- Do not commit changes by yourself. Explain when something is ready to be commited.
 
 ## Environment
 
