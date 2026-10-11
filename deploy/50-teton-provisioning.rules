@@ -1,0 +1,1 @@
+// SHOULD: polkit rule letting the service manage NetworkManager connections without root.

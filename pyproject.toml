@@ -1,0 +1,3 @@
+# Project metadata (to be implemented): package `teton-provisioning`, Python >=3.12,
+# deps cryptography/structlog/bless/bleak/qrcode, dev extras pytest/pytest-asyncio/ruff,
+# console scripts `teton-device` and `teton-configurator`. See docs/DESIGN.md §8.
