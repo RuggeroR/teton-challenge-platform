@@ -10,13 +10,14 @@ A take-home challenge for Teton.ai (Software Engineer, Fleet). It is a **Wi-Fi p
 
 | File | Role |
 |---|---|
-| `docs/plan_v4.md` | **Source of truth for decisions and their rationale.** The owner must be able to defend every decision in an interview. |
+| `docs/plan_v5.md` | **Source of truth for decisions and their rationale.** The owner must be able to defend every decision in an interview. (`plan_v4.md` is kept for history.) |
+| `docs/IMPLEMENTATION_PLAN.md` | Build order, step-by-step plan and open review questions |
 | `docs/SPEC.md` | What to build: protocol, messages, crypto parameters, CLI behaviour, acceptance criteria |
 | `docs/DESIGN.md` | How to build it: module map, interfaces, state machine, testing strategy |
 | `docs/research/channels.md` | Why BLE was chosen over the other channels (input for the writeup) |
 
 Rules:
-- **Do not change a decision silently.** If implementation shows a decision in `plan_v4.md` is wrong or impossible, stop and explain the problem to the owner. Once agreed, record it in a new `docs/plan_v5.md` (copy v4, add a changelog row) and update SPEC/DESIGN to match.
+- **Do not change a decision silently.** If implementation shows a decision in the latest `plan_vN.md` is wrong or impossible, stop and explain the problem to the owner. Once agreed, record it in the plan (a new `plan_vN+1.md` for a new review round, or a new changelog row in the current one) and update SPEC/DESIGN to match.
 - Work in the scope order from SPEC §12: **MUST**, then SHOULD, then COULD. Don't build COULD items unless asked.
 - The owner wants to understand every part. Explain non-obvious choices in the PR description or in a short comment, and keep the code simple over clever.
 - Do not commit changes by yourself. Explain when something is ready to be commited.

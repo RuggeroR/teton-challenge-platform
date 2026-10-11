@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.0, 2026-10-11. Derived from [plan_v4.md](plan_v4.md), which records why each decision was made. If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.1, 2026-10-11. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applies the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -55,7 +55,7 @@ No OS-level Bluetooth pairing or bonding is used (decision Q2).
 
 ### 4.1 Framing
 
-Every message is UTF-8 JSON, framed as `[u16 big-endian total length][payload]`, split into chunks of at most `chunk_size` bytes. The receiver reassembles the chunks per characteristic.
+Every message on `session`, `command` and `status` is UTF-8 JSON, framed as `[u16 big-endian total length][payload]`, split into chunks of at most `chunk_size` bytes. The receiver reassembles the chunks per characteristic. `info` is a single GATT read of raw JSON and is not framed.
 - `chunk_size` = negotiated ATT MTU − 3, falling back to 20.
 - Maximum message size: 8192 bytes (fits a CA certificate PEM). Larger messages are an error.
 - A reassembly buffer is reset on disconnect, or when a message is incomplete for 10 s.
@@ -107,7 +107,8 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 
 ### 5.5 Secret hygiene
 
-- Passwords, PSKs, the setup code and keys are **never logged**. Log redaction applies to the keys `psk`, `password`, `setup_code`, `code`, `confirm`, `pub`, `ct` and `ca_cert_pem`, and a test enforces this.
+- Passwords, PSKs, the setup code and keys are **never logged**. Log redaction applies to the keys `psk`, `password`, `setup_code`, `confirm`, `pub`, `ct` and `ca_cert_pem`, and a test enforces this. The setup code is only ever stored and logged under `setup_code`, and the QR payload is never logged. The key `code` is **not** redacted, because error messages use it (`busy` must stay visible in logs).
+- Secrets **never appear on a command line**, where any local user could read them (`ps`, `/proc/<pid>/cmdline`). Every subprocess goes through one runner, and secrets reach `nmcli` through stdin only (§8). A test with a fake runner asserts that no secret appears in any argv.
 - Credentials are passed to NetworkManager and then dropped from memory (best effort in Python).
 - NetworkManager stores the profile in `/etc/NetworkManager/system-connections/` (root, `0600`).
 
@@ -136,7 +137,7 @@ There is no reset command over BLE. Reset is local only (decision Q7).
 | `{"type":"ready"}` | Session established |
 | `{"type":"scan_result","networks":[…]}` | Each entry: `ssid`, `signal` (0–100), `security`. Deduplicated by SSID, sorted by signal, max 30 |
 | `{"type":"status","state":"connecting"}` | Sent as soon as credentials are accepted |
-| `{"type":"status","state":"connected", …}` | `ip`, `internet` (`full`), `warnings` (list, e.g. `["server_not_verified"]`) |
+| `{"type":"status","state":"connected", …}` | `ip`, `internet` (`full` \| `limited` \| `none` \| `unknown`, as reported by NetworkManager for the Wi-Fi interface), `warnings` (list: `server_not_verified`, `limited_internet`) |
 | `{"type":"status","state":"failed","reason":…}` | `reason` from §7; the session stays open for a retry |
 | `{"type":"error","code":…}` | `bad_request`, `busy`, `unsupported_security` |
 
@@ -148,8 +149,8 @@ There is no reset command over BLE. Reset is local only (decision Q7).
 | `ssid_not_found` | `nmcli` "No network with SSID" | "The device can't see this network. Move closer or check the name." |
 | `auth_failed` | 802.1X failure on Enterprise | "The username or password was rejected by the network." |
 | `no_ip` | activated, but no IPv4 address within the timeout | "Connected to Wi-Fi but the network gave no address. Contact IT." |
-| `captive_portal` | NM connectivity = `portal` | "This network needs a login page; devices can't use it. Contact IT." |
-| `no_internet` | NM connectivity `none`/`limited` and gateway ping fails | "Connected, but there is no internet access. Contact IT." |
+| `captive_portal` | NM connectivity of the Wi-Fi interface = `portal` | "This network needs a login page; devices can't use it. Contact IT." |
+| `no_internet` | NM connectivity is not `full` and the gateway does not answer a ping on the Wi-Fi interface | "Connected, but there is no internet access. Contact IT." |
 | `timeout` | no result within 45 s | "Connecting took too long. Try again." |
 
 Mapping `nmcli` output to reasons is a heuristic. Unknown errors map to `timeout`, and the raw message goes to the device log only.
@@ -157,10 +158,10 @@ Mapping `nmcli` output to reasons is a heuristic. Unknown errors map to `timeout
 ## 8. Device Wi-Fi behaviour
 
 1. **Scan:** `nmcli -t -f SSID,SIGNAL,SECURITY device wifi list --rescan yes`.
-2. **Apply:** create a dedicated profile `teton-<ssid>` (`nmcli connection add …`), with security set per §6.2. For PEAP: `802-1x.eap peap`, `802-1x.phase2-auth mschapv2`, plus `802-1x.ca-cert` and `802-1x.domain-suffix-match` when provided. If neither is provided, add the warning `server_not_verified` (decision Q3).
+2. **Apply:** create a dedicated profile `teton-<ssid>` (`nmcli connection add …`) **without secrets**, with security set per §6.2. For PEAP: `802-1x.eap peap`, `802-1x.phase2-auth mschapv2`, plus `802-1x.ca-cert` and `802-1x.domain-suffix-match` when provided. If neither is provided, add the warning `server_not_verified` (decision Q3). Then set the secret (`wifi-sec.psk` or `802-1x.password`) by piping `set …`, `save`, `quit` into `nmcli connection edit id teton-<ssid>` through stdin (§5.5).
 3. **Activate:** `nmcli connection up teton-<ssid>` with a 45 s timeout.
-4. **Verify:** device state `activated` → IPv4 address present → `nmcli networking connectivity check` → ping the gateway (`ping -c 2 -W 2`).
-5. **Success:** connectivity `full` → report `connected`, stop advertising, keep the profile, and set it to autoconnect.
+4. **Verify,** always on the Wi-Fi interface: device state `activated` → IPv4 address present (else `no_ip`) → `nmcli networking connectivity check` to refresh, then read the interface's own value with `nmcli -g GENERAL.IP4-CONNECTIVITY device show <iface>` → `portal` fails with `captive_portal` → if not `full`, ping the gateway with `ping -I <iface> -c 2 -W 2` (no answer fails with `no_internet`).
+5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, stop advertising, keep the profile, and set it to autoconnect.
 6. **Failure:** report the reason (§7), delete the new profile, and let NetworkManager return to the previous connection if any. The BLE session stays open for a retry.
 
 All `nmcli` calls go through one backend interface, so tests and simulation use a fake.

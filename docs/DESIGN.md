@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.0, 2026-10-11. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v4.md](plan_v4.md). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.1, 2026-10-11. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 splits the transport interface (§5) and moves the BLE spike first (§9). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -23,7 +23,7 @@ Version 1.0, 2026-10-11. This is the implementation design: how the code is orga
 
 Principles:
 - **One protocol implementation, many transports.** The handshake, crypto and message handling never know whether bytes travel over BLE, a Unix socket (simulation) or memory (tests).
-- **Side effects behind interfaces.** Wi-Fi (`WifiBackend`), transport (`Transport`) and clock/randomness are injected, so the core logic is testable without hardware.
+- **Side effects behind interfaces.** Wi-Fi (`WifiBackend`), transport (`DeviceTransport`, `ClientTransport`) and clock/randomness are injected, so the core logic is testable without hardware.
 - **Device is the authority.** It owns the state machine, verifies everything and decides success. The configurator is a thin, friendly client.
 
 ## 2. Repository layout
@@ -35,7 +35,8 @@ CLAUDE.md                     guidance for Claude Code sessions
 README.md                     setup, hardware, demo steps, troubleshooting (submission)
 pyproject.toml                one package, three importable modules, two console scripts
 docs/
-  plan_v4.md                  decisions and rationale (source of truth)
+  plan_v5.md                  decisions and rationale (source of truth; plan_v4.md kept for history)
+  IMPLEMENTATION_PLAN.md      build order, steps and open review questions
   SPEC.md                     requirements and protocol
   DESIGN.md                   this file
   ARCHITECTURE.md             submission writeup (written last)
@@ -47,7 +48,7 @@ src/teton_common/             shared by both sides, no I/O
   framing.py                  length-prefix framing, chunking, reassembly
   crypto.py                   X25519/HKDF/HMAC/AES-GCM handshake and envelope
   setup_code.py               generate, format, normalise, validate setup codes
-  transport.py                Transport interface (4 logical channels)
+  transport.py                DeviceTransport / ClientTransport interfaces (4 logical channels)
   memory_transport.py         in-memory paired transport for tests
   log.py                      structlog config + secret redaction processor
 src/teton_device/
@@ -113,11 +114,25 @@ UNPROVISIONED ──run──► ADVERTISING ──handshake ok──► SESSION
 ## 5. Key interfaces (contracts for implementation)
 
 ```python
-class Transport(Protocol):                       # teton_common/transport.py
+class DeviceTransport(Protocol):                 # teton_common/transport.py (device side)
+    def on_connect(self, cb: Callable[[], Awaitable[None]]) -> None: ...
+    def on_disconnect(self, cb: Callable[[], Awaitable[None]]) -> None: ...
+    def set_info(self, data: bytes) -> None: ...                  # value served on INFO reads
+    def on_receive(self, channel: Channel, cb: Callable[[bytes], Awaitable[None]]) -> None: ...
+    async def send(self, channel: Channel, data: bytes) -> None: ...
+    @property
+    def chunk_size(self) -> int: ...                             # negotiated MTU - 3, or 20
+
+class ClientTransport(Protocol):                 # teton_common/transport.py (configurator side)
+    async def connect(self) -> None: ...
+    async def read_info(self) -> bytes: ...
     async def send(self, channel: Channel, data: bytes) -> None: ...
     def on_receive(self, channel: Channel, cb: Callable[[bytes], Awaitable[None]]) -> None: ...
+    @property
+    def chunk_size(self) -> int: ...
     async def close(self) -> None: ...
-# Channel = INFO | SESSION | COMMAND | STATUS. Framing is applied above the transport.
+# Channel = INFO | SESSION | COMMAND | STATUS. INFO is a plain read (not framed);
+# framing is applied above the transport for SESSION, COMMAND and STATUS.
 
 class WifiBackend(Protocol):                     # teton_device/wifi/backend.py
     async def scan(self) -> list[Network]: ...
@@ -143,7 +158,7 @@ class ProvisioningClient:                        # teton_configurator/client.py
 
 - Protocol violations (bad JSON, unexpected `seq`, decryption failure, wrong state) end the session, are logged with a reason, and never crash the service.
 - Wi-Fi failures are not protocol errors. They become `status failed` with a reason (SPEC §7), and the session continues.
-- External commands (`nmcli`, `ping`) run with timeouts. Their raw output goes to the debug log only, never to the configurator, and is redacted.
+- External commands (`nmcli`, `ping`) run through one runner function, with timeouts. Their raw output goes to the debug log only, never to the configurator, and is redacted. Secrets are passed through stdin, never in argv (SPEC §5.5).
 - The configurator turns every failure into one plain-language sentence plus a next action (retry, retype the code, contact IT).
 
 ## 7. Testing strategy
@@ -155,8 +170,8 @@ class ProvisioningClient:                        # teton_configurator/client.py
 | `framing` | chunk sizes 20/185/512, max size, interleaved channels, timeout reset | none |
 | `messages` | schema validation, bad input rejected | none |
 | `state` | allowed/forbidden transitions, persistence of PROVISIONED | none |
-| `wifi/nmcli` | parse recorded `nmcli` outputs (fixtures) into networks and failure reasons | none |
-| `log` | no secret appears in captured logs during a full simulated run | none |
+| `wifi/nmcli` | parse recorded `nmcli` outputs (fixtures) into networks and failure reasons; with a fake runner, no secret ever appears in argv; per-interface success rule (full / limited + gateway / portal / gateway down) | none |
+| `log` | no secret appears in captured logs during a full simulated run; error codes such as `busy` stay visible | none |
 | end to end | device service + configurator client over `memory_transport` with `wifi/fake` (PSK ok, wrong password then retry, wrong code, portal) | none |
 | manual | real BLE + real Wi-Fi on the two laptops; `btmon` capture; Enterprise via hostapd | yes |
 
@@ -175,9 +190,9 @@ CI (SHOULD): GitHub Actions on `ubuntu-24.04` runs `ruff check`, `ruff format --
 
 Everything else comes from the standard library (`asyncio`, `json`, `secrets`, `subprocess`, `argparse`).
 
-## 9. Known risks (from plan_v4 §10)
+## 9. Known risks (from plan_v5 §10)
 
-- BlueZ peripheral quirks: confirm `bless` advertises on both laptops before building on it (first hardware spike).
+- BlueZ peripheral quirks: confirm `bless` advertises on both laptops before building on it. The hardware spike runs right after project tooling, before any protocol code (plan_v5).
 - Laptop A is already on Wi-Fi: provisioning switches networks. On failure, the rollback relies on NetworkManager reconnecting the previous profile.
 - Running without root: polkit allows the active desktop user to manage connections. BlueZ may need `sudo` or a group, so the README documents both.
 - Enterprise testing needs AP mode on laptop B's Wi-Fi card (`iw list`). If it isn't supported, Enterprise is tested in simulation only, and the writeup says so.

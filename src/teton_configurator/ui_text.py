@@ -1,1 +1,2 @@
-# Plain-language strings shown to the technician, incl. failure reason -> message + next action. See SPEC §7.
+# Plain-language strings shown to the technician, incl. failure reason -> message + next action.
+# See SPEC §7.
