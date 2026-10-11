@@ -1,6 +1,6 @@
 # Teton Challenge: plan v5
 
-v5, 2026-10-11. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review (implementation planning); open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
+v5, 2026-10-11. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, then simplified after the BLE spike (S1–S4); open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
 
 ## Changelog
 
@@ -16,6 +16,18 @@ Found while planning the implementation (questions Q1, Q2, Q3, Q7, Q8 and Q9 in 
 | Log redaction (review Q7) | Redacted keys include `code` | **`code` removed from the redaction list** (it hid error codes such as `busy`). The setup code is only stored and logged under `setup_code`; the QR payload is never logged | Ruggero |
 | Success rule (review Q8) | Success only when internet is `full`; global connectivity check | **Success = Wi-Fi activated + IP + gateway reachable on the Wi-Fi interface.** `full` → success; `limited`/`none`/`unknown` with gateway reachable → success with a warning; `portal` → `captive_portal`; gateway unreachable → `no_internet`. Checks are **per interface** (NM per-device connectivity, `ping -I`) | Ruggero |
 | Secrets to `nmcli` (review Q9) | Not specified (would end up in argv) | **Secrets never go on a command line.** Profiles are created without secrets, which are then set through stdin (`nmcli connection edit`). One subprocess runner; a test asserts no secret appears in argv | Ruggero |
+
+### v5 additions after the BLE spike (2026-10-11)
+
+The spike (`IMPLEMENTATION_PLAN.md` Step 0.2) showed that BLE already does several jobs the docs gave to our code. Guiding principle from Ruggero: **this is a demo; keep it simple and explainable, not production-ready.**
+
+| Area | Before | v5 (decision) | Decided by |
+|---|---|---|---|
+| Laptop roles | Laptop A = device, laptop B = configurator, machines unassigned | **Laptop A = laptop 1 (`ruggero-PC`, where the spike ran); laptop B = laptop 2.** The radio behaviour behind S1, S3 and S4 was measured on laptop 1's adapter; re-run the spike if the roles ever swap | Ruggero |
+| S1. One session at a time | Device enforces it; a second connection gets `error: busy` | **The radio enforces it:** a connected BLE peripheral stops advertising, so a second configurator can't find or connect to it. `busy` is removed from the protocol; simulation mode accepts one client at a time | Ruggero |
+| S2. Chunk size | Negotiated MTU − 3, fallback 20 | **Fixed 20-byte chunks**, the minimum every BLE link supports. No MTU handling anywhere (no `bless` patch, no private `bleak` call). Slower (a scan list or CA certificate takes a couple of seconds), fine for a demo; production would use the MTU (517 measured). `info` stays a single read under 180 bytes | Ruggero |
+| S3. Connection tracking | `DeviceTransport` has connect/disconnect events (review Q2) | **The device doesn't track connections:** a new `hello` starts a new session (with one connection at a time, it can only come from a new configurator). Sessions also end on the idle timeout or a protocol error. The kernel restarts advertising after a disconnect, so no code is needed for that | Ruggero |
+| S4. After success | Stop advertising and keep running | **The device finishes:** after sending `connected` it waits briefly for the configurator to leave, stops the BLE server (which removes the advertisement) and exits. The next `run` sees `provisioned` and doesn't advertise. Re-enter setup with `teton-device reset` (unchanged) | Ruggero |
 
 ### v3 → v4
 
@@ -90,8 +102,8 @@ Hardware:
 
 | Role | Machine | Needs |
 |---|---|---|
-| Teton Device | Laptop A (Ubuntu) | Bluetooth adapter (peripheral role), Wi-Fi via NetworkManager |
-| Configurator | Laptop B (Ubuntu) | Bluetooth adapter (central role); later its Wi-Fi card can host the Enterprise test AP |
+| Teton Device | Laptop A = laptop 1, `ruggero-PC` (Ubuntu) | Bluetooth adapter (peripheral role), Wi-Fi via NetworkManager. BLE behaviour verified in the spike (v5) |
+| Configurator | Laptop B = laptop 2 (Ubuntu) | Bluetooth adapter (central role); later its Wi-Fi card can host the Enterprise test AP (AP mode still to be checked) |
 | Target network (Personal) | Android phone hotspot | WPA2/WPA3-Personal |
 | Target network (Enterprise) | Laptop B running `hostapd` with EAP | Wi-Fi card that supports AP mode (`iw list` → "AP") |
 | Phone configurator (Could) | Android phone, Chrome | Web Bluetooth |
@@ -148,7 +160,7 @@ Threats: passive sniffer, active MITM / fake device, rogue configurator, replay 
 **Enterprise (PEAP) server validation (Q3):** configurator may send the RADIUS server's CA certificate and/or expected domain; the device sets them in the NetworkManager profile (`802-1x.ca-cert`, `802-1x.domain-suffix-match`). If neither is supplied, the device connects but reports a warning shown to the technician. Production policy: refuse.
 
 **Limits and hygiene:**
-- One session at a time; session expires after 5 minutes idle.
+- One session at a time, enforced by the radio: a connected BLE peripheral stops advertising (v5, S1). A new `hello` starts a new session (S3); a session expires after 5 minutes idle.
 - After 5 failed handshakes, back off 30 s, doubling each time (no permanent lockout in the demo).
 - Credentials go straight into the NetworkManager profile (root-only, 0600), are never logged, and are dropped from memory after use; a test asserts no secret appears in logs.
 - Secrets never appear on a command line, where any local user could read them through `ps`. They are passed to `nmcli` through stdin; a test asserts no secret appears in argv (v5).
@@ -175,7 +187,7 @@ Library: `cryptography` (X25519, HKDF, HMAC, AESGCM). Browser page later: WebCry
         │ ◄── enc(status: connected, ip, internet:     ├─ verify: activated, IP, connectivity
         │        full|limited|none|unknown [, warning]) │   check (Wi-Fi iface), ping gateway
         │     or enc(status: failed, reason) ───────── │   (on failure: stay in session, allow retry)
-        └ plain-language result / retry prompt         └─ on success: stop advertising, keep profile
+        └ plain-language result / retry prompt         └─ on success: keep profile, stop BLE, exit
 ```
 
 GATT service (custom 128-bit UUID), characteristics:
@@ -184,15 +196,15 @@ GATT service (custom 128-bit UUID), characteristics:
 - `command` (write): encrypted commands: `scan`, `set_credentials`, `reset`.
 - `status` (notify): encrypted state and results.
 
-Messages are **JSON**, length-prefixed and split into chunks that fit the BLE packet size (MTU), then reassembled.
+Messages are **JSON**, length-prefixed and split into fixed 20-byte chunks, the smallest BLE packet every device supports, then reassembled (v5, S2).
 
 Failure reasons reported (each mapped to a plain-language message on the configurator): `wrong_password`, `ssid_not_found`, `auth_failed` (Enterprise), `no_ip`, `captive_portal`, `no_internet` (gateway unreachable), `timeout`.
 
 Success rule (v5): Wi-Fi activated + IP + gateway reachable on the Wi-Fi interface. If NM's connectivity for that interface is not `full`, the result is still success, with the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Hospital networks often block Ubuntu's check URL; in production the check would target Smith's endpoint instead.
 
-Transport interface (v5): `DeviceTransport` (`on_connect`, `on_disconnect`, `set_info`, `on_receive`, `send`, `chunk_size`) and `ClientTransport` (`connect`, `read_info`, `send`, `on_receive`, `chunk_size`, `close`). Framing is applied above both.
+Transport interface (v5, simplified by S2 and S3): `DeviceTransport` (`start`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`). Framing is applied above both.
 
-Device state machine: `ADVERTISING → SESSION_ESTABLISHED → CONNECTING → CONNECTED` or `FAILED(reason) → back to SESSION_ESTABLISHED for retry`. On `CONNECTED` the device stops advertising. `teton-device reset` deletes the profile, generates a new setup code and starts advertising again.
+Device state machine: `ADVERTISING → SESSION_ESTABLISHED → CONNECTING → CONNECTED` or `FAILED(reason) → back to SESSION_ESTABLISHED for retry`. On `CONNECTED` the device stops its BLE server, which ends advertising, and exits (v5, S4). `teton-device reset` deletes the profile, generates a new setup code and marks the device unprovisioned, so the next `run` advertises again.
 
 ## 6. Tech stack (Python first)
 

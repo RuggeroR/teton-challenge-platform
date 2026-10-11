@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.1, 2026-10-11. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 splits the transport interface (§5) and moves the BLE spike first (§9). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.2, 2026-10-11. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applies the post-spike simplifications S1–S4 (§4, §5, §9). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -94,7 +94,7 @@ Configurator                                        Device
                                                     verify IP, connectivity, ping
                      ◄────────────────────────────  enc(status connected | failed+reason)
  on failed: retry from scan or credentials          on failed: delete profile, back to SESSION_ESTABLISHED
- on connected: done                                 on connected: stop advertising → PROVISIONED
+ on connected: done                                 on connected: PROVISIONED → stop BLE server, exit
 ```
 
 ## 4. Device state machine
@@ -102,37 +102,35 @@ Configurator                                        Device
 ```
 UNPROVISIONED ──run──► ADVERTISING ──handshake ok──► SESSION_ESTABLISHED ──set_credentials──► CONNECTING
       ▲                    ▲   ▲                            ▲                                   │
-      │                    │   └── disconnect / timeout ────┤                                   ├─► CONNECTED ─► PROVISIONED (advertising off)
+      │                    │   └── idle timeout / new hello ┤                                   ├─► CONNECTED ─► PROVISIONED (process exits)
       │                    │                                └───────── failed(reason) ─────────┘
       └──────── reset (local CLI only) ◄──────────────────────────────────────────────── PROVISIONED
 ```
 
 - `state.py` validates transitions and raises on invalid ones. Every transition is logged.
-- `PROVISIONED` is persisted (in `state.json`). On restart, a provisioned device does not advertise.
-- A disconnect while `CONNECTING` lets the connection attempt finish. The result is logged, and if it failed the profile is rolled back.
+- `PROVISIONED` is persisted (in `state.json`). After it, `run` stops the BLE server and exits; on restart, a provisioned device does not advertise (plan_v5, S4).
+- The device does not track BLE connections (plan_v5, S3). One connection at a time is guaranteed by the radio: a connected peripheral stops advertising, and BlueZ restarts advertising after the disconnect (S1). A new `hello` ends any previous session; otherwise a session ends on the 300 s idle timeout or a protocol error.
+- A connection attempt that has started always finishes, even if the configurator is gone. The result is logged, and if it failed the profile is rolled back.
 
 ## 5. Key interfaces (contracts for implementation)
 
 ```python
 class DeviceTransport(Protocol):                 # teton_common/transport.py (device side)
-    def on_connect(self, cb: Callable[[], Awaitable[None]]) -> None: ...
-    def on_disconnect(self, cb: Callable[[], Awaitable[None]]) -> None: ...
+    async def start(self) -> None: ...                           # serve + advertise
     def set_info(self, data: bytes) -> None: ...                  # value served on INFO reads
     def on_receive(self, channel: Channel, cb: Callable[[bytes], Awaitable[None]]) -> None: ...
     async def send(self, channel: Channel, data: bytes) -> None: ...
-    @property
-    def chunk_size(self) -> int: ...                             # negotiated MTU - 3, or 20
+    async def close(self) -> None: ...                           # stop serving; ends advertising
 
 class ClientTransport(Protocol):                 # teton_common/transport.py (configurator side)
     async def connect(self) -> None: ...
     async def read_info(self) -> bytes: ...
-    async def send(self, channel: Channel, data: bytes) -> None: ...
     def on_receive(self, channel: Channel, cb: Callable[[bytes], Awaitable[None]]) -> None: ...
-    @property
-    def chunk_size(self) -> int: ...
+    async def send(self, channel: Channel, data: bytes) -> None: ...
     async def close(self) -> None: ...
 # Channel = INFO | SESSION | COMMAND | STATUS. INFO is a plain read (not framed);
-# framing is applied above the transport for SESSION, COMMAND and STATUS.
+# framing (fixed 20-byte chunks) is applied above the transport for SESSION, COMMAND and STATUS.
+# No connect/disconnect events and no MTU: see plan_v5 S2, S3.
 
 class WifiBackend(Protocol):                     # teton_device/wifi/backend.py
     async def scan(self) -> list[Network]: ...
@@ -167,11 +165,11 @@ class ProvisioningClient:                        # teton_configurator/client.py
 |---|---|---|
 | `setup_code` | generate/format/normalise/validate, ambiguous characters | none |
 | `crypto` | round trip; wrong code fails confirmation; tampered ciphertext, replayed or skipped `seq` rejected; distinct keys per direction | none |
-| `framing` | chunk sizes 20/185/512, max size, interleaved channels, timeout reset | none |
+| `framing` | chunk size 20 (the fixed size in use) and a larger one, so framing stays generic, max size, interleaved channels, timeout reset | none |
 | `messages` | schema validation, bad input rejected | none |
 | `state` | allowed/forbidden transitions, persistence of PROVISIONED | none |
 | `wifi/nmcli` | parse recorded `nmcli` outputs (fixtures) into networks and failure reasons; with a fake runner, no secret ever appears in argv; per-interface success rule (full / limited + gateway / portal / gateway down) | none |
-| `log` | no secret appears in captured logs during a full simulated run; error codes such as `busy` stay visible | none |
+| `log` | no secret appears in captured logs during a full simulated run; error codes such as `bad_request` stay visible | none |
 | end to end | device service + configurator client over `memory_transport` with `wifi/fake` (PSK ok, wrong password then retry, wrong code, portal) | none |
 | manual | real BLE + real Wi-Fi on the two laptops; `btmon` capture; Enterprise via hostapd | yes |
 
@@ -192,7 +190,7 @@ Everything else comes from the standard library (`asyncio`, `json`, `secrets`, `
 
 ## 9. Known risks (from plan_v5 §10)
 
-- BlueZ peripheral quirks: confirm `bless` advertises on both laptops before building on it. The hardware spike runs right after project tooling, before any protocol code (plan_v5).
-- Laptop A is already on Wi-Fi: provisioning switches networks. On failure, the rollback relies on NetworkManager reconnecting the previous profile.
+- BlueZ peripheral quirks: the hardware spike (IMPLEMENTATION_PLAN Step 0.2) confirmed `bless` 0.3.0 works on laptop 1 without root or pairing. It also showed that `bless` hides the MTU and read offsets; we avoid needing them with fixed 20-byte chunks and a short `info` (plan_v5, S2). The behaviour S1, S3 and S4 rely on was measured on laptop 1's adapter; re-run the spike if laptop 2 ever becomes the device.
+- Laptop A (laptop 1) is already on Wi-Fi: provisioning switches networks. On failure, the rollback relies on NetworkManager reconnecting the previous profile.
 - Running without root: polkit allows the active desktop user to manage connections. BlueZ may need `sudo` or a group, so the README documents both.
 - Enterprise testing needs AP mode on laptop B's Wi-Fi card (`iw list`). If it isn't supported, Enterprise is tested in simulation only, and the writeup says so.

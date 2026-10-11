@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.1, 2026-10-11. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applies the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.2, 2026-10-11. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applies the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -8,7 +8,7 @@ Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD
 
 ## 1. Scope
 
-A technician uses a **configurator** (laptop B) to send Wi-Fi credentials to a **Teton Device** (laptop A) over **Bluetooth Low Energy (BLE)**. The device joins the network, verifies internet access and reports the result back.
+A technician uses a **configurator** (laptop B = laptop 2) to send Wi-Fi credentials to a **Teton Device** (laptop A = laptop 1) over **Bluetooth Low Energy (BLE)**. The device joins the network, verifies internet access and reports the result back.
 
 | ID | Constraint (from the challenge) | How this spec meets it |
 |---|---|---|
@@ -55,10 +55,11 @@ No OS-level Bluetooth pairing or bonding is used (decision Q2).
 
 ### 4.1 Framing
 
-Every message on `session`, `command` and `status` is UTF-8 JSON, framed as `[u16 big-endian total length][payload]`, split into chunks of at most `chunk_size` bytes. The receiver reassembles the chunks per characteristic. `info` is a single GATT read of raw JSON and is not framed.
-- `chunk_size` = negotiated ATT MTU − 3, falling back to 20.
+Every message on `session`, `command` and `status` is UTF-8 JSON, framed as `[u16 big-endian total length][payload]`, split into chunks of at most **20 bytes**. The receiver reassembles the chunks per characteristic. `info` is a single GATT read of raw JSON and is not framed.
+- The chunk size is fixed at 20 bytes, the minimum every BLE link supports, so no MTU negotiation is needed (plan_v5, S2). Production would use the negotiated MTU − 3 (517 measured in the spike).
+- `info` must stay under 180 bytes, so it fits in one read with the MTU that Android and BlueZ negotiate automatically.
 - Maximum message size: 8192 bytes (fits a CA certificate PEM). Larger messages are an error.
-- A reassembly buffer is reset on disconnect, or when a message is incomplete for 10 s.
+- A reassembly buffer is reset when a message is incomplete for 10 s, and when a new session starts.
 
 ## 5. Security protocol
 
@@ -101,13 +102,13 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 
 ### 5.4 Limits
 
-- One active session at a time. A second connection gets `{"type":"error","code":"busy"}` on `session`.
-- A session ends after 300 s without traffic, on disconnect, or on any protocol violation.
+- One active session at a time, enforced by the radio: while a configurator is connected, the device does not advertise, so no other configurator can find or connect to it (plan_v5, S1). Simulation mode accepts one client at a time.
+- The device does not track BLE connections (plan_v5, S3). A new `hello` ends any previous session and starts a new one. A session also ends after 300 s without traffic, or on any protocol violation. After a disconnect, BlueZ restarts advertising by itself.
 - Failed handshakes: after 5 consecutive failures, refuse handshakes for 30 s, doubling each time up to 600 s. The counter resets on success. No permanent lockout.
 
 ### 5.5 Secret hygiene
 
-- Passwords, PSKs, the setup code and keys are **never logged**. Log redaction applies to the keys `psk`, `password`, `setup_code`, `confirm`, `pub`, `ct` and `ca_cert_pem`, and a test enforces this. The setup code is only ever stored and logged under `setup_code`, and the QR payload is never logged. The key `code` is **not** redacted, because error messages use it (`busy` must stay visible in logs).
+- Passwords, PSKs, the setup code and keys are **never logged**. Log redaction applies to the keys `psk`, `password`, `setup_code`, `confirm`, `pub`, `ct` and `ca_cert_pem`, and a test enforces this. The setup code is only ever stored and logged under `setup_code`, and the QR payload is never logged. The key `code` is **not** redacted, because error messages use it (error codes such as `bad_request` must stay visible in logs).
 - Secrets **never appear on a command line**, where any local user could read them (`ps`, `/proc/<pid>/cmdline`). Every subprocess goes through one runner, and secrets reach `nmcli` through stdin only (§8). A test with a fake runner asserts that no secret appears in any argv.
 - Credentials are passed to NetworkManager and then dropped from memory (best effort in Python).
 - NetworkManager stores the profile in `/etc/NetworkManager/system-connections/` (root, `0600`).
@@ -139,7 +140,7 @@ There is no reset command over BLE. Reset is local only (decision Q7).
 | `{"type":"status","state":"connecting"}` | Sent as soon as credentials are accepted |
 | `{"type":"status","state":"connected", …}` | `ip`, `internet` (`full` \| `limited` \| `none` \| `unknown`, as reported by NetworkManager for the Wi-Fi interface), `warnings` (list: `server_not_verified`, `limited_internet`) |
 | `{"type":"status","state":"failed","reason":…}` | `reason` from §7; the session stays open for a retry |
-| `{"type":"error","code":…}` | `bad_request`, `busy`, `unsupported_security` |
+| `{"type":"error","code":…}` | `bad_request`, `unsupported_security` |
 
 ## 7. Failure reasons
 
@@ -161,7 +162,7 @@ Mapping `nmcli` output to reasons is a heuristic. Unknown errors map to `timeout
 2. **Apply:** create a dedicated profile `teton-<ssid>` (`nmcli connection add …`) **without secrets**, with security set per §6.2. For PEAP: `802-1x.eap peap`, `802-1x.phase2-auth mschapv2`, plus `802-1x.ca-cert` and `802-1x.domain-suffix-match` when provided. If neither is provided, add the warning `server_not_verified` (decision Q3). Then set the secret (`wifi-sec.psk` or `802-1x.password`) by piping `set …`, `save`, `quit` into `nmcli connection edit id teton-<ssid>` through stdin (§5.5).
 3. **Activate:** `nmcli connection up teton-<ssid>` with a 45 s timeout.
 4. **Verify,** always on the Wi-Fi interface: device state `activated` → IPv4 address present (else `no_ip`) → `nmcli networking connectivity check` to refresh, then read the interface's own value with `nmcli -g GENERAL.IP4-CONNECTIVITY device show <iface>` → `portal` fails with `captive_portal` → if not `full`, ping the gateway with `ping -I <iface> -c 2 -W 2` (no answer fails with `no_internet`).
-5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, stop advertising, keep the profile, and set it to autoconnect.
+5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, keep the profile, set it to autoconnect, mark the device provisioned, then stop the BLE server and exit (plan_v5, S4).
 6. **Failure:** report the reason (§7), delete the new profile, and let NetworkManager return to the previous connection if any. The BLE session stays open for a retry.
 
 All `nmcli` calls go through one backend interface, so tests and simulation use a fake.
@@ -172,7 +173,7 @@ All `nmcli` calls go through one backend interface, so tests and simulation use 
 
 | Command | Behaviour |
 |---|---|
-| `teton-device run` | Load or create the state, print the code + QR + demo note, advertise, serve sessions, log to stdout |
+| `teton-device run` | Load or create the state, print the code + QR + demo note, advertise, serve sessions, log to stdout. After a successful provisioning: wait up to 10 s for the configurator to leave, stop the BLE server and exit 0 with "Provisioned. Run `teton-device reset` to set up again." On an already provisioned device: print the same line and exit 0 without advertising |
 | `teton-device run --simulate` | Same, but over a local Unix socket with the fake Wi-Fi backend (§10) |
 | `teton-device reset` | Delete Teton profiles, generate a new setup code, mark as unprovisioned |
 | `teton-device show-code` | Print the code + QR again |
@@ -196,7 +197,7 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 
 ## 10. Simulation mode (SHOULD)
 
-- Transport: a Unix domain socket at `$XDG_RUNTIME_DIR/teton-sim.sock`. It carries the same four logical channels (`info`, `session`, `command`, `status`) with the same framing and crypto, so only the radio is simulated.
+- Transport: a Unix domain socket at `$XDG_RUNTIME_DIR/teton-sim.sock`. It carries the same four logical channels (`info`, `session`, `command`, `status`) with the same framing, 20-byte chunks and crypto, so only the radio is simulated. Like BLE, it serves one client at a time.
 - Wi-Fi: a fake backend with a fixed network list (`Home-PSK` with password `correct-horse-battery`, `Hospital-EAP` with user `nurse01` and password `teton-demo`, `Cafe-Portal` → `captive_portal`, `Weak-Signal` → `timeout`).
 - Lets evaluators run the full flow in two terminals on any machine, and is used by the end-to-end test.
 

@@ -62,7 +62,7 @@ command -v hostapd                     # /usr/sbin/hostapd (only needed for the 
 
 ### Tested on
 
-| | Laptop 1 |
+| | Laptop 1 (Teton Device) |
 |---|---|
 | OS | Ubuntu 24.04.5 LTS, kernel 7.0.0-38-generic (HWE) |
 | Python | 3.12.3 |
