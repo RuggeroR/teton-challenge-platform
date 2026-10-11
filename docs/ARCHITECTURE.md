@@ -1,0 +1,1 @@
+<!-- Submission writeup for Teton (written last): channel choice and trade-offs, how credentials are protected in transit, data flow, security considerations, and how the system changes for 200 devices in a hospital wing. Sources: docs/plan_v4.md, docs/research/channels.md. -->
