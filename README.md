@@ -14,16 +14,25 @@ Secure headless Wi-Fi provisioning for Ubuntu devices over BLE, with encrypted c
 | Test network (WPA2/WPA3-Personal) | An Android phone hotspot (any access point works) |
 | Test network (WPA2-Enterprise, optional) | A laptop whose Wi-Fi card supports **AP mode**, running `hostapd` |
 
-Both roles can run on either laptop, so it's simplest to set up both laptops the same way.
+### Roles and Ubuntu versions
+
+| Laptop | Role | Ubuntu | Python |
+|---|---|---|---|
+| Laptop A (laptop 1) | **Teton Device**: receives the credentials and joins Wi-Fi | **24.04 LTS** (the reference platform for BlueZ peripheral mode and NetworkManager) | 3.12 |
+| Laptop B (laptop 2) | **Configurator**, and the optional WPA2-Enterprise test AP | **24.04 or 26.04 LTS** | 3.12 on 24.04, 3.14 on 26.04 |
+
+The code needs Python 3.12 or newer. Older Ubuntu releases are not supported.
+
+The device has no keyboard input beyond a few simulated buttons, pressed as single keys in the `teton-device run` terminal: **P** opens a 5-minute pairing window (the device is only visible over Bluetooth during it), **R** twice within 3 seconds resets it, **S** shows its status, and **Q** or Ctrl+C turns it off. A status line at the bottom acts as its LED.
 
 ### Software
 
-Both laptops run **Ubuntu 24.04 LTS**. Older releases are not supported.
+The table lists the Ubuntu 24.04 versions. On a 26.04 configurator, BlueZ, NetworkManager, Python and `hostapd` are newer, which is fine.
 
 | Component | Version | Ships with Ubuntu 24.04? | Install if missing |
 |---|---|---|---|
 | Python | 3.12 | yes | n/a |
-| `venv` module | for Python 3.12 | no, not on a desktop install | `sudo apt install python3-venv` |
+| `venv` module | for your Python | no, not on a desktop install | `sudo apt install python3-venv` |
 | BlueZ (`bluetoothd`, `bluetoothctl`, `btmon`) | 5.72 | yes | `sudo apt install bluez` |
 | NetworkManager (`nmcli`) | 1.46 | yes | `sudo apt install network-manager` |
 | `ping`, `ip` | any | yes | `sudo apt install iputils-ping iproute2` |
@@ -45,14 +54,14 @@ Ubuntu ships the `hostapd` system service **masked**. Leave it that way: the Ent
 All of these checks are read-only. Each line shows what you should see.
 
 ```bash
-lsb_release -rs                        # 24.04
-python3 --version                      # Python 3.12.x
+lsb_release -rs                        # 24.04 (the configurator may also show 26.04)
+python3 --version                      # Python 3.12.x (3.14.x on 26.04)
 python3 -m venv --help >/dev/null && echo venv ok
-bluetoothctl --version                 # bluetoothctl: 5.72
+bluetoothctl --version                 # bluetoothctl: 5.72 (newer on 26.04)
 systemctl is-active bluetooth          # active
 bluetoothctl show | grep -E "Powered|Roles"   # Powered: yes, Roles: central, Roles: peripheral
 rfkill list                            # no "blocked: yes"
-nmcli --version                        # nmcli tool, version 1.46.x
+nmcli --version                        # nmcli tool, version 1.46.x (newer on 26.04)
 nmcli device | grep wifi               # a wifi device that is not "unmanaged"
 nmcli general permissions | grep -E "settings.modify.system|network-control"   # both "yes"
 nmcli networking connectivity check    # full (if you're online)

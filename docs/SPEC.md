@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.2, 2026-10-11. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applies the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.3, 2026-10-13. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -15,13 +15,15 @@ A technician uses a **configurator** (laptop B = laptop 2) to send Wi-Fi credent
 | C1 | No internet, cloud relay or shared network at the start | Point-to-point BLE GATT link (§4) |
 | C2 | Real Wi-Fi connection | NetworkManager joins the network, then IP and internet are checked (§8) |
 | C3 | No plaintext credentials over the air | Authenticated key exchange + AES-256-GCM at the application layer (§5) |
-| C4 | Usable by a non-developer | Guided terminal flow, typed setup code, plain-language errors (§9) |
+| C4 | Usable by a non-developer | Guided terminal flow, typed setup code, plain-language errors, physical-style buttons on the device (§9) |
 
 Out of scope for code (covered in the writeup instead): manufacturer certificates, PAKE, fleet enrollment with Smith, `.deb` packaging, metrics.
 
 ## 2. Environment
 
-- Both laptops: **Ubuntu 24.04 LTS**, Python 3.12, BlueZ 5.72, NetworkManager 1.46, a Bluetooth 4.2+ adapter.
+- Device (laptop A): **Ubuntu 24.04 LTS**, Python 3.12, BlueZ 5.72, NetworkManager 1.46. This is the reference platform for BlueZ peripheral mode and NetworkManager.
+- Configurator (laptop B): **Ubuntu 24.04 or 26.04 LTS**. Laptop 2 runs 26.04 with Python 3.14 and newer BlueZ, NetworkManager and `hostapd` (plan_v5, D1).
+- Both: a Bluetooth 4.2+ adapter. The code requires Python ≥ 3.12 and uses no language or standard-library feature newer than 3.12.
 - Device: the Wi-Fi interface is managed by NetworkManager. Runs as the logged-in desktop user (polkit lets the active user manage connections). `sudo` is a documented fallback if BlueZ refuses to register the GATT app.
 - Test networks: Android phone hotspot (WPA2-PSK / WPA3-SAE). Optionally `hostapd` with its built-in EAP server on laptop B for WPA2-Enterprise PEAP.
 - Install: `python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"`. No other tooling required.
@@ -35,14 +37,15 @@ Out of scope for code (covered in the writeup instead): manufacturer certificate
 | Setup code | 16 characters of **Crockford base32** (`0-9 A-Z` without `I L O U`), i.e. 80 random bits from `secrets`, displayed as `XXXX-XXXX-XXXX-XXXX` |
 | Code input normalization | uppercase; remove spaces and `-`; map `O→0`, `I→1`, `L→1`; reject if not exactly 16 valid characters |
 | Storage | `state.json` in the state dir (default `~/.local/state/teton-device/`, dir `0700`, file `0600`) holding `device_id` and `setup_code` |
-| Display | On `run`, the device prints the code and a terminal QR with payload `TETON:v1;id=<device_id>;code=<code>`, plus the line: *"For demo purposes the code is shown on screen; in production it is printed on the device label."* |
-| Rotation | `teton-device reset` generates a new setup code |
+| Display | On `run` and after every reset, the device prints the code and a terminal QR with payload `TETON:v1;id=<device_id>;code=<code>`, plus the line: *"For demo purposes the code is shown on screen; in production it is printed on the device label."* The code + QR are the stand-in for the printed label |
+| Rotation | The [R] reset button (§9.1) generates a new setup code |
+| Input | The device never accepts typed text: no passwords, codes or commands at runtime. Its only inputs are the simulated buttons of §9.1 (plan_v5, D2) |
 
 **Why 80 bits.** An attacker who actively poses as the configurator receives the device's confirmation tag (§5.2) and could then guess codes offline. 80 random bits makes that infeasible. A passive eavesdropper cannot attack the code at all, because it never learns the ECDH shared secret. A short PIN would require a PAKE (writeup: upgrade path).
 
 ## 4. BLE GATT interface
 
-Service UUID: `18388b82-f3e5-40bb-a9b9-fd0f9d789b62`, included in advertisements. The device advertises only while unprovisioned.
+Service UUID: `18388b82-f3e5-40bb-a9b9-fd0f9d789b62`, included in advertisements. The device advertises only while unprovisioned **and** a pairing window is open: the window lasts 300 s from the last press of the [P] button (§9.1). When it expires, advertising stops; a session already in progress may finish.
 
 | Characteristic | UUID | Properties | Content |
 |---|---|---|---|
@@ -103,7 +106,7 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 ### 5.4 Limits
 
 - One active session at a time, enforced by the radio: while a configurator is connected, the device does not advertise, so no other configurator can find or connect to it (plan_v5, S1). Simulation mode accepts one client at a time.
-- The device does not track BLE connections (plan_v5, S3). A new `hello` ends any previous session and starts a new one. A session also ends after 300 s without traffic, or on any protocol violation. After a disconnect, BlueZ restarts advertising by itself.
+- The device does not track BLE connections (plan_v5, S3). A new `hello` ends any previous session and starts a new one. A session also ends after 300 s without traffic, or on any protocol violation. After a disconnect, BlueZ restarts advertising by itself if the pairing window is still open (the advertisement is still registered). After the window has expired, the advertisement is unregistered and nothing comes back.
 - Failed handshakes: after 5 consecutive failures, refuse handshakes for 30 s, doubling each time up to 600 s. The counter resets on success. No permanent lockout.
 
 ### 5.5 Secret hygiene
@@ -129,7 +132,7 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 | `{"type":"scan"}` | none |
 | `{"type":"set_credentials", …}` | `ssid` (str, 1–32 bytes), `hidden` (bool), `security` (`open` \| `wpa2-psk` \| `wpa3-sae` \| `wpa2-eap-peap`), `psk` (str, 8–63, for PSK/SAE), `eap` (object, for PEAP): `identity`, `password`, optional `anonymous_identity`, `ca_cert_pem`, `domain_suffix_match` |
 
-There is no reset command over BLE. Reset is local only (decision Q7).
+There is no reset command over BLE. Reset is the physical [R] button only (decision Q7, plan_v5 D2).
 
 ### 6.3 Device → configurator (encrypted, on `status`)
 
@@ -162,7 +165,7 @@ Mapping `nmcli` output to reasons is a heuristic. Unknown errors map to `timeout
 2. **Apply:** create a dedicated profile `teton-<ssid>` (`nmcli connection add …`) **without secrets**, with security set per §6.2. For PEAP: `802-1x.eap peap`, `802-1x.phase2-auth mschapv2`, plus `802-1x.ca-cert` and `802-1x.domain-suffix-match` when provided. If neither is provided, add the warning `server_not_verified` (decision Q3). Then set the secret (`wifi-sec.psk` or `802-1x.password`) by piping `set …`, `save`, `quit` into `nmcli connection edit id teton-<ssid>` through stdin (§5.5).
 3. **Activate:** `nmcli connection up teton-<ssid>` with a 45 s timeout.
 4. **Verify,** always on the Wi-Fi interface: device state `activated` → IPv4 address present (else `no_ip`) → `nmcli networking connectivity check` to refresh, then read the interface's own value with `nmcli -g GENERAL.IP4-CONNECTIVITY device show <iface>` → `portal` fails with `captive_portal` → if not `full`, ping the gateway with `ping -I <iface> -c 2 -W 2` (no answer fails with `no_internet`).
-5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, keep the profile, set it to autoconnect, mark the device provisioned, then stop the BLE server and exit (plan_v5, S4).
+5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, keep the profile, set it to autoconnect, mark the device provisioned, then close the pairing window, which stops advertising before the configurator disconnects. The device stays on in `PROVISIONED` (plan_v5, D2, replacing the exit of S4).
 6. **Failure:** report the reason (§7), delete the new profile, and let NetworkManager return to the previous connection if any. The BLE session stays open for a retry.
 
 All `nmcli` calls go through one backend interface, so tests and simulation use a fake.
@@ -171,18 +174,42 @@ All `nmcli` calls go through one backend interface, so tests and simulation use 
 
 ### 9.1 Device CLI: `teton-device`
 
+The device has no keyboard input beyond a few simulated physical buttons and a status "LED" (plan_v5, D2).
+
 | Command | Behaviour |
 |---|---|
-| `teton-device run` | Load or create the state, print the code + QR + demo note, advertise, serve sessions, log to stdout. After a successful provisioning: wait up to 10 s for the configurator to leave, stop the BLE server and exit 0 with "Provisioned. Run `teton-device reset` to set up again." On an already provisioned device: print the same line and exit 0 without advertising |
-| `teton-device run --simulate` | Same, but over a local Unix socket with the fake Wi-Fi backend (§10) |
-| `teton-device reset` | Delete Teton profiles, generate a new setup code, mark as unprovisioned |
-| `teton-device show-code` | Print the code + QR again |
-| `--state-dir PATH` | Override the state directory (all commands) |
+| `teton-device run` | Load or create the state, print the code + QR + demo note, then wait for buttons. **An unprovisioned device does not advertise until [P] is pressed.** Serves sessions while the pairing window is open, logs to stdout. After a successful provisioning it stops advertising and stays on in `PROVISIONED` (green LED). Started on an already provisioned device, it stays on without advertising. Exits only on [Q] or Ctrl+C |
+| `teton-device run --simulate` | Same, with the same buttons, but over a local Unix socket with the fake Wi-Fi backend (§10) |
+| `--state-dir PATH` | Override the state directory |
+| `--verbose` | `DEBUG` logging (§11) |
+
+There are no `reset` or `show-code` subcommands: reset is the [R] button, and the code + QR are printed on start and after every reset.
+
+**Buttons.** While `run` is active, single keypresses (no Enter) act as buttons:
+
+| Key | Button | Behaviour |
+|---|---|---|
+| `P` | Pairing | Opens a 300 s pairing window and starts advertising. Pressing it again restarts the window at 300 s. When the window expires, advertising stops; a session in progress may finish. On a provisioned device it only shows "Already connected. Hold reset to set up again." |
+| `R` | Reset | Needs **two presses within 3 s** (a simulated long press); a single press shows "Press reset again to confirm." Then: delete the Teton NetworkManager profiles (through `WifiBackend`), generate a new setup code, print the new code + QR, and return to `UNPROVISIONED` with advertising off until [P] |
+| `S` | Status | Prints the state, SSID, IP, internet result and the remaining pairing time |
+| `Q` or Ctrl+C | Power | Clean shutdown: stop advertising, close the transport, restore the terminal, exit 0 |
+
+Keys are case-insensitive; other keys are ignored.
+
+**Status line ("LED").** Always visible at the bottom of the terminal:
+
+| LED | Meaning |
+|---|---|
+| off | idle / unprovisioned, pairing window closed |
+| blinking blue | pairing window open, with the countdown (`4:59`) |
+| yellow | connecting to Wi-Fi |
+| solid green | connected (provisioned) |
+| red | the last Wi-Fi attempt failed, with the reason |
 
 ### 9.2 Configurator CLI: `teton-configurator`
 
 A guided flow with numbered choices and no flags needed:
-1. Scan for devices for 10 s, then list them (`Teton-9A2C`, signal).
+1. Tell the technician to press the pairing button on the device, then scan for devices for 10 s and list them (`Teton-9A2C`, signal). If none is found: "No device found. Press the pairing button on the device and try again."
 2. Ask for the setup code ("printed on the device label").
 3. Run the handshake (§5.1). On failure, explain and offer to retype the code.
 4. Ask the device to scan, then show its networks (name, signal bars, lock icon or "enterprise") plus "Other (hidden) network".
@@ -197,7 +224,8 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 
 ## 10. Simulation mode (SHOULD)
 
-- Transport: a Unix domain socket at `$XDG_RUNTIME_DIR/teton-sim.sock`. It carries the same four logical channels (`info`, `session`, `command`, `status`) with the same framing, 20-byte chunks and crypto, so only the radio is simulated. Like BLE, it serves one client at a time.
+- Transport: a Unix domain socket at `$XDG_RUNTIME_DIR/teton-sim.sock`. It carries the same four logical channels (`info`, `session`, `command`, `status`) with the same framing, 20-byte chunks and crypto, so only the radio is simulated. Like BLE, it serves one client at a time, and it accepts new clients only while the pairing window is open (the simulated "advertising").
+- Buttons and LED: the same as on BLE (§9.1).
 - Wi-Fi: a fake backend with a fixed network list (`Home-PSK` with password `correct-horse-battery`, `Hospital-EAP` with user `nurse01` and password `teton-demo`, `Cafe-Portal` → `captive_portal`, `Weak-Signal` → `timeout`).
 - Lets evaluators run the full flow in two terminals on any machine, and is used by the end-to-end test.
 
@@ -208,16 +236,16 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 ## 12. Acceptance criteria
 
 **MUST**
-1. On two Ubuntu 24.04 laptops, a technician following the README provisions laptop A onto a phone hotspot (WPA2-PSK) using only the guided configurator.
+1. With laptop A on Ubuntu 24.04 and laptop B on Ubuntu 24.04 or 26.04, a technician following the README provisions laptop A onto a phone hotspot (WPA2-PSK) using only the guided configurator and the device's [P] button. The device advertises nothing until [P] is pressed, and stops when the pairing window expires.
 2. The configurator shows `connected` with an IP and confirmed internet access.
 3. A wrong password produces `wrong_password`, and the retry works within the same session.
 4. A wrong setup code fails the handshake with a clear message. No credentials are sent.
 5. A `btmon` capture of a run shows no plaintext SSID password. The capture is saved in `docs/evidence/`.
-6. Unit tests pass: setup code, crypto (including tamper, replay and wrong-code cases), framing, messages, state machine, nmcli output parsing, and log redaction.
+6. Unit tests pass: setup code, crypto (including tamper, replay and wrong-code cases), framing, messages, state machine, nmcli output parsing, log redaction, and the buttons (pairing window open / expire / restart, reset needing a double press, [P] ignored when provisioned).
 7. README, ARCHITECTURE.md (writeup) and evidence (logs and screenshots) are in the repo.
 
 **SHOULD**
-8. `--simulate` runs the full flow on one machine, and an end-to-end test runs it in CI (GitHub Actions: ruff + pytest).
+8. `--simulate` runs the full flow on one machine, and an end-to-end test runs it in CI (GitHub Actions: ruff + pytest on Python 3.12 and 3.14).
 9. WPA2-Enterprise PEAP is verified against `hostapd` on laptop B, with the config files in `scripts/hostapd-enterprise/`.
 10. A `deploy/` systemd unit and polkit rule, plus `scripts/preflight.sh` that checks the adapter, BlueZ, NetworkManager and Python versions.
 

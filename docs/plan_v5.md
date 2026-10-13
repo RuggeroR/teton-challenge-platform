@@ -1,8 +1,19 @@
 # Teton Challenge: plan v5
 
-v5, 2026-10-11. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, then simplified after the BLE spike (S1–S4); open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
+v5, 2026-10-11, amended 2026-10-13. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2); open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
 
 ## Changelog
+
+### v5 additions: platforms and device buttons (2026-10-13)
+
+| Area | Before | v5 (decision) | Decided by |
+|---|---|---|---|
+| D1. Ubuntu and Python versions | Both laptops Ubuntu 24.04 LTS, Python 3.12 (v4 Q10) | **Device (laptop A): Ubuntu 24.04 LTS, Python 3.12**, the reference platform for BlueZ peripheral mode and NetworkManager. **Configurator (laptop B): Ubuntu 24.04 or 26.04 LTS**; laptop 2 runs 26.04 with Python 3.14 and newer BlueZ, NetworkManager and `hostapd`. `requires-python = ">=3.12"`, and the code uses no feature newer than 3.12. Laptop B first confirms that the package installs and that `cryptography` and `bleak` import on 3.14. CI (SHOULD) runs the tests on 3.12 and 3.14. The README states both versions and each laptop's role | Ruggero |
+| D2. Device input | Device CLI with `run`, `reset` and `show-code`; an unprovisioned device advertises as soon as `run` starts | **No text input on the device, ever** (no passwords, codes or commands at runtime). While `teton-device run` is active, single keypresses act as simulated physical buttons, and a status line acts as the LED. **[P] pairing** opens a 5-minute pairing window, the only time the device advertises; pressing it again restarts the window; when it expires advertising stops, but an active session may finish. On a provisioned device [P] shows "Already connected. Hold reset to set up again." **[R] reset** needs two presses within 3 s (a simulated long press): it deletes the Teton profiles, generates a new setup code, prints the new code + QR, and returns to unprovisioned with advertising off. **[S] status** prints the state, SSID, IP, internet result and remaining pairing time. **[Q] or Ctrl+C** powers off cleanly. LED: off = idle/unprovisioned, blinking blue = pairing window open (with countdown), yellow = connecting, solid green = connected, red = last attempt failed (with reason). The setup code + QR stay on screen as the stand-in for the printed label. `reset` and `show-code` subcommands removed; the CLI is `teton-device run [--simulate] [--state-dir] [--verbose]`. Simulation mode uses the same buttons. Q7 ("re-enter setup via explicit reset") is now done with [R] | Ruggero |
+| D2 consequence: after success | S4: after success the device stops its BLE server and exits | **The device stays on after success:** it stops advertising (closing the pairing window) right after sending `connected`, before the configurator disconnects, and stays in `PROVISIONED` with a green LED until [R][R] or [Q]. It must keep running, because [P] and [R] are only reachable while `run` is active. Starting `run` on a provisioned device also stays on, without advertising | Ruggero (proposed by Claude, follows from D2; confirmed 2026-10-13) |
+| D2 consequence: transport | `DeviceTransport.start()` serves and advertises; `close()` stops both | **Advertising is switched separately:** `DeviceTransport.set_advertising(on)`. `start()` only registers the GATT service, so a pairing window can end without dropping an active session. The simulation transport stops accepting new clients while advertising is off | Ruggero (proposed by Claude, follows from D2; confirmed 2026-10-13) |
+
+Why the pairing window matters (for the writeup): it shrinks the attack surface. The device is only reachable over BLE for a few minutes after someone physically presses a button, so an attacker must be nearby at exactly that moment, on top of needing the setup code. That's standard practice in real products (for example the Matter commissioning window, or the "hold to pair" button on most smart-home devices). See §3b.
 
 ### v4 → v5
 
@@ -27,7 +38,7 @@ The spike (`IMPLEMENTATION_PLAN.md` Step 0.2) showed that BLE already does sever
 | S1. One session at a time | Device enforces it; a second connection gets `error: busy` | **The radio enforces it:** a connected BLE peripheral stops advertising, so a second configurator can't find or connect to it. `busy` is removed from the protocol; simulation mode accepts one client at a time | Ruggero |
 | S2. Chunk size | Negotiated MTU − 3, fallback 20 | **Fixed 20-byte chunks**, the minimum every BLE link supports. No MTU handling anywhere (no `bless` patch, no private `bleak` call). Slower (a scan list or CA certificate takes a couple of seconds), fine for a demo; production would use the MTU (517 measured). `info` stays a single read under 180 bytes | Ruggero |
 | S3. Connection tracking | `DeviceTransport` has connect/disconnect events (review Q2) | **The device doesn't track connections:** a new `hello` starts a new session (with one connection at a time, it can only come from a new configurator). Sessions also end on the idle timeout or a protocol error. The kernel restarts advertising after a disconnect, so no code is needed for that | Ruggero |
-| S4. After success | Stop advertising and keep running | **The device finishes:** after sending `connected` it waits briefly for the configurator to leave, stops the BLE server (which removes the advertisement) and exits. The next `run` sees `provisioned` and doesn't advertise. Re-enter setup with `teton-device reset` (unchanged) | Ruggero |
+| S4. After success | Stop advertising and keep running | **The device finishes:** after sending `connected` it waits briefly for the configurator to leave, stops the BLE server (which removes the advertisement) and exits. The next `run` sees `provisioned` and doesn't advertise. Re-enter setup with `teton-device reset` (unchanged). *Superseded on 2026-10-13 by D2: the device stays on, and reset is the [R] button* | Ruggero |
 
 ### v3 → v4
 
@@ -102,8 +113,8 @@ Hardware:
 
 | Role | Machine | Needs |
 |---|---|---|
-| Teton Device | Laptop A = laptop 1, `ruggero-PC` (Ubuntu) | Bluetooth adapter (peripheral role), Wi-Fi via NetworkManager. BLE behaviour verified in the spike (v5) |
-| Configurator | Laptop B = laptop 2 (Ubuntu) | Bluetooth adapter (central role); later its Wi-Fi card can host the Enterprise test AP (AP mode still to be checked) |
+| Teton Device | Laptop A = laptop 1, `ruggero-PC` (Ubuntu 24.04, Python 3.12) | Bluetooth adapter (peripheral role), Wi-Fi via NetworkManager. BLE behaviour verified in the spike (v5) |
+| Configurator | Laptop B = laptop 2 (Ubuntu 26.04, Python 3.14; D1) | Bluetooth adapter (central role); later its Wi-Fi card can host the Enterprise test AP with `hostapd` (AP mode still to be checked) |
 | Target network (Personal) | Android phone hotspot | WPA2/WPA3-Personal |
 | Target network (Enterprise) | Laptop B running `hostapd` with EAP | Wi-Fi card that supports AP mode (`iw list` → "AP") |
 | Phone configurator (Could) | Android phone, Chrome | Web Bluetooth |
@@ -134,17 +145,19 @@ Alternatives when the device has **no pre-shared material**:
 |---|---|---|---|
 | Numeric comparison | Both sides do a fresh key exchange, then each screen shows a 6-digit code derived from it; the technician confirms they match | Yes, if the human really compares | Device needs a display; humans click "yes" without looking |
 | Passkey entry | Device shows a random 6-digit code at boot; technician types it into the configurator | Yes | Device needs a display; code is only 20 bits, so must be one-time and rate-limited |
-| Physical action window | Button press (or power-cycle) opens a 2-minute provisioning window | No, only narrows the time an attacker has | WPS-style; easy UX, weak security |
+| Physical action window | Button press (or power-cycle) opens a 2-minute provisioning window | No, only narrows the time an attacker has | WPS-style; easy UX, weak security on its own |
 | Trust on first use (TOFU) | Accept whoever connects first, remember their key afterwards | No, the first contact is unprotected | Simple; acceptable only in a controlled room |
 | Manufacturer certificate | Device has a key + certificate signed by Teton's CA at the factory; configurator verifies the signature | Yes | Strongest and scales best, but it *is* pre-shared material, just not secret to the technician |
 
 The writeup should present the QR as the demo choice and the manufacturer certificate as the 200-device answer.
 
+The demo also adds a **physical action window on top of the QR** (D2): the device advertises only for 5 minutes after the [P] button is pressed. On its own a window doesn't stop a MITM, but combined with the setup code it shrinks the attack surface: an attacker needs the code *and* must be in radio range during those few minutes after someone physically touched the device.
+
 ## 4. Security design (decided)
 
 Threats: passive sniffer, active MITM / fake device, rogue configurator, replay of captured messages, evil-twin access point (Enterprise).
 
-**Setup code (trust anchor).** At first start the device generates a random **16-character setup code** (Crockford base32, 80 bits, e.g. `7K2M-QX9D-4HTR-B8WZ`) and stores it in its state directory (mode 0600). It prints the code and a QR containing `{device_id, code}` in the terminal with the note *"For demo purposes the code is shown on screen; in production it is printed on the device label."* The technician types the code into the configurator; the QR is there for the later phone page.
+**Setup code (trust anchor).** At first start the device generates a random **16-character setup code** (Crockford base32, 80 bits, e.g. `7K2M-QX9D-4HTR-B8WZ`) and stores it in its state directory (mode 0600). It prints the code and a QR containing `{device_id, code}` in the terminal with the note *"For demo purposes the code is shown on screen; in production it is printed on the device label."* The technician types the code into the configurator; the QR is there for the later phone page. The code is typed only on the configurator: the device never accepts typed text (D2). A reset ([R][R]) generates a new code.
 
 *Why 80 bits and not a short PIN:* with Q1 (a), someone who records a handshake could try codes offline. 80 random bits makes that infeasible, while staying typeable. A 6-digit PIN would require a PAKE (SPAKE2) instead, which the writeup mentions as the upgrade path.
 
@@ -160,6 +173,7 @@ Threats: passive sniffer, active MITM / fake device, rogue configurator, replay 
 **Enterprise (PEAP) server validation (Q3):** configurator may send the RADIUS server's CA certificate and/or expected domain; the device sets them in the NetworkManager profile (`802-1x.ca-cert`, `802-1x.domain-suffix-match`). If neither is supplied, the device connects but reports a warning shown to the technician. Production policy: refuse.
 
 **Limits and hygiene:**
+- The device advertises only during a 5-minute pairing window opened by the [P] button (D2).
 - One session at a time, enforced by the radio: a connected BLE peripheral stops advertising (v5, S1). A new `hello` starts a new session (S3); a session expires after 5 minutes idle.
 - After 5 failed handshakes, back off 30 s, doubling each time (no permanent lockout in the demo).
 - Credentials go straight into the NetworkManager profile (root-only, 0600), are never logged, and are dropped from memory after use; a test asserts no secret appears in logs.
@@ -174,6 +188,7 @@ Library: `cryptography` (X25519, HKDF, HMAC, AESGCM). Browser page later: WebCry
  Configurator (laptop B, guided CLI)                  Teton Device (laptop A, foreground command)
  ───────────────────────────────────                  ─────────────────────────────────────────
  technician types setup code                          prints setup code + QR ("demo only")
+                                                      technician presses [P]: 5-min pairing window
         │                                               ├─ BLE GATT server (bless / BlueZ D-Bus)
         │  BLE GATT                                     ├─ session crypto (X25519/HKDF/AES-GCM)
         ├──► hello(pubkey_c, nonce_c) ────────────────► │
@@ -187,13 +202,13 @@ Library: `cryptography` (X25519, HKDF, HMAC, AESGCM). Browser page later: WebCry
         │ ◄── enc(status: connected, ip, internet:     ├─ verify: activated, IP, connectivity
         │        full|limited|none|unknown [, warning]) │   check (Wi-Fi iface), ping gateway
         │     or enc(status: failed, reason) ───────── │   (on failure: stay in session, allow retry)
-        └ plain-language result / retry prompt         └─ on success: keep profile, stop BLE, exit
+        └ plain-language result / retry prompt         └─ on success: keep profile, stop advertising, LED green
 ```
 
 GATT service (custom 128-bit UUID), characteristics:
 - `info` (read, plaintext): device ID, protocol version, capabilities. No secrets.
 - `session` (write + notify): handshake messages.
-- `command` (write): encrypted commands: `scan`, `set_credentials`, `reset`.
+- `command` (write): encrypted commands: `scan`, `set_credentials`. (There is no `reset` over BLE: reset is the physical [R] button, D2.)
 - `status` (notify): encrypted state and results.
 
 Messages are **JSON**, length-prefixed and split into fixed 20-byte chunks, the smallest BLE packet every device supports, then reassembled (v5, S2).
@@ -202,13 +217,15 @@ Failure reasons reported (each mapped to a plain-language message on the configu
 
 Success rule (v5): Wi-Fi activated + IP + gateway reachable on the Wi-Fi interface. If NM's connectivity for that interface is not `full`, the result is still success, with the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Hospital networks often block Ubuntu's check URL; in production the check would target Smith's endpoint instead.
 
-Transport interface (v5, simplified by S2 and S3): `DeviceTransport` (`start`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`). Framing is applied above both.
+Transport interface (v5, simplified by S2 and S3): `DeviceTransport` (`start`, `set_advertising`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`). Framing is applied above both. `set_advertising` was added by D2.
 
-Device state machine: `ADVERTISING → SESSION_ESTABLISHED → CONNECTING → CONNECTED` or `FAILED(reason) → back to SESSION_ESTABLISHED for retry`. On `CONNECTED` the device stops its BLE server, which ends advertising, and exits (v5, S4). `teton-device reset` deletes the profile, generates a new setup code and marks the device unprovisioned, so the next `run` advertises again.
+Device state machine: `UNPROVISIONED → [P] → ADVERTISING → SESSION_ESTABLISHED → CONNECTING → CONNECTED` or `FAILED(reason) → back to SESSION_ESTABLISHED for retry`. If the pairing window expires without a session, `ADVERTISING → UNPROVISIONED`. On `CONNECTED` the device stops advertising and stays on in `PROVISIONED` (D2, replacing the exit of S4). [R][R] deletes the profile, generates a new setup code and returns to `UNPROVISIONED`, with advertising off until [P].
+
+Device buttons and LED (D2): the device takes no typed text. While `run` is active, single keys act as buttons ([P] pairing, [R] reset by double press, [S] status, [Q]/Ctrl+C power off) and a status line acts as the LED.
 
 ## 6. Tech stack (Python first)
 
-Platform: **Ubuntu 24.04 LTS** on both laptops (Python 3.12, BlueZ 5.72, NetworkManager 1.46).
+Platform (D1): the device runs **Ubuntu 24.04 LTS** (Python 3.12, BlueZ 5.72, NetworkManager 1.46). The configurator runs Ubuntu 24.04 or 26.04 LTS (laptop 2: 26.04, Python 3.14). The code targets Python 3.12 (`requires-python = ">=3.12"`) and uses nothing newer.
 
 Device side (laptop A):
 - BLE peripheral: **`bless`** (BlueZ over D-Bus). Fallback: `dbus-next` against BlueZ directly.
@@ -216,6 +233,7 @@ Device side (laptop A):
 - Internet check: `nmcli networking connectivity check` to refresh, then the Wi-Fi interface's own value (`nmcli -g GENERAL.IP4-CONNECTIVITY device show <iface>`) + `ping -I <iface>` to the gateway (v5).
 - Crypto: `cryptography`. Logging: `structlog` (JSON, secrets redacted).
 - QR: `qrcode` (terminal), shown next to the typed setup code with the "demo only" note.
+- Buttons and LED: single keypresses read with the standard library (`termios`, `tty`) behind a small input interface, plus a status line (D2). No new dependency.
 
 Configurator side:
 - **Must: Python CLI on laptop B** with `bleak`, guided prompts (pick device, type setup code, pick SSID from the device's scan or enter a hidden one, enter password or Enterprise login, see result, retry on failure). Keep it non-developer friendly: no flags required, plain-language errors.
@@ -223,7 +241,7 @@ Configurator side:
 
 Test infrastructure:
 - Unit tests (pytest) for crypto, framing, state machine.
-- `--simulate` mode: in-memory transport + fake Wi-Fi backend, so the whole flow runs without radios (also used in CI).
+- `--simulate` mode: in-memory transport + fake Wi-Fi backend, so the whole flow runs without radios (also used in CI, on Python 3.12 and 3.14, D1).
 - Real runs: phone hotspot (PSK) and `hostapd` EAP on laptop B (Enterprise). `btmon` capture as evidence that only ciphertext goes over the air.
 
 ## 7. Repo layout
@@ -254,7 +272,7 @@ Points to cover:
 - **Bulk alternatives**: Wi-Fi Easy Connect (DPP) with QR bootstrapping, or a temporary provisioning SSID with 802.1X and per-device certs, or zero-touch: device ships with a staging network profile, registers with Smith, Smith pushes the real config.
 - **Operator UX**: progress dashboard per device (pending/connected/failed with plain-language fix), retries, audit log, role-based access, no secrets displayed.
 - **Fleet integration**: device reports to Smith once online; Smith records who provisioned what, when, and where (room/wing), enables remote credential rotation later.
-- **RF realities**: BLE congestion with 200 advertisers, advertise only while unprovisioned, short-lived sessions, physical proximity checks (RSSI), devices labelled by location.
+- **RF realities**: BLE congestion with 200 advertisers, advertise only during a button-opened pairing window (so only the devices being set up right now are on air, D2), short-lived sessions, physical proximity checks (RSSI), devices labelled by location.
 
 ## 9. Scope and milestones (moderate effort)
 
@@ -321,9 +339,9 @@ All resolved on 2026-10-11; details are folded into §4, §5 and §6.
 | Q4 | Message format | JSON |
 | Q5 | Network selection | Device scan list + manual hidden SSID |
 | Q6 | Failure handling | Report reason, keep session, retry |
-| Q7 | After success | Stop advertising, explicit reset to re-enter |
+| Q7 | After success | Stop advertising, explicit reset to re-enter (since D2: the [R] button, double press) |
 | Q8 | Demo run mode | Foreground command; systemd unit is a Should |
 | Q9 | Setup code input | Typed code; QR shown with "demo only" note |
-| Q10 | Ubuntu | 24.04 LTS |
+| Q10 | Ubuntu | 24.04 LTS (since D1: device 24.04; configurator 24.04 or 26.04) |
 
 Defaults applied (no objection raised): guided terminal configurator, `nmcli`, `venv` + `pip` install, one session at a time with timeouts and handshake rate limiting.

@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 3, 2026-10-11. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applies the post-spike simplifications S1–S4 and fixes the laptop roles (plan_v5). If this plan disagrees with those documents, they win.
+Version 4, 2026-10-13. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -8,7 +8,7 @@ Version 3, 2026-10-11. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN
 - Scope follows SPEC §12: **MUST** first, then **SHOULD**, then **COULD**. Two exceptions: the BLE hardware spike runs right after project tooling (Step 0.2), because it can change the transport interface; and simulation mode (SHOULD) comes before the real BLE transports, because it is cheap and lets us debug the full protocol without radios.
 - Every step lists its goal, the files it touches, the tests to write, how you can verify it yourself, and the SPEC/DESIGN sections it implements.
 - 🔧 **HARDWARE** marks steps that need the laptops or the phone. Every other step runs on any machine.
-- **Roles (fixed in plan_v5):** laptop A, the Teton Device, is **laptop 1** (`ruggero-PC`, where the spike ran). Laptop B, the configurator and Enterprise test AP, is **laptop 2**.
+- **Roles (fixed in plan_v5):** laptop A, the Teton Device, is **laptop 1** (`ruggero-PC`, where the spike ran; Ubuntu 24.04, Python 3.12). Laptop B, the configurator and Enterprise test AP, is **laptop 2** (Ubuntu 26.04, Python 3.14; D1). The code uses nothing newer than Python 3.12.
 - **Guiding principle (plan_v5):** this is a demo. Prefer the simplest version that works and can be explained, over production completeness.
 - Every step ends with the same checks:
   ```bash
@@ -23,9 +23,9 @@ Version 3, 2026-10-11. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN
 
 | Phase | Steps | Scope | Hardware |
 |---|---|---|---|
-| 0. Tooling + BLE spike | 0.1–0.2 | MUST | 🔧 0.2 |
+| 0. Tooling + BLE spike + laptop B check | 0.1–0.3 | MUST | 🔧 0.2, 0.3 |
 | 1. Shared pure code (`teton_common`) | 1.1–1.7 | MUST | no |
-| 2. Device core (`teton_device`) | 2.1–2.7 | MUST | 2.5 (scan only, one laptop) |
+| 2. Device core (`teton_device`) | 2.1–2.8 | MUST | 2.5 (scan only, one laptop) |
 | 3. Configurator (`teton_configurator`) | 3.1–3.3 | MUST | no |
 | 4. End-to-end test (in memory) | 4.1 | MUST | no |
 | 5. Simulation mode + CLIs | 5.1–5.2 | SHOULD (CLIs are MUST) | no |
@@ -110,9 +110,24 @@ Observations:
 
 Design consequences:
 1. **One connection at a time is enforced by the radio:** while a configurator is connected, the device doesn't advertise, so a second configurator can neither find nor connect to it. → Decided as **S1**: `busy` removed.
-2. **Stopping advertising must be explicit and must happen before the configurator disconnects,** otherwise the kernel re-enables it on disconnect. → Decided as **S4**: after success the device stops its BLE server and exits.
+2. **Stopping advertising must be explicit and must happen before the configurator disconnects,** otherwise the kernel re-enables it on disconnect. → Decided as **S4**: after success the device stops its BLE server and exits. (Since D2 it stops advertising and stays on; the ordering rule still holds.)
 3. **Advertising comes back by itself after a failed session** (for example a wrong setup code), so the device doesn't need a restart. → Together with 1, decided as **S3**: the device doesn't track connections; a new `hello` starts a new session.
 4. **`bless` alone can't give us the MTU** (so the chunk size would be stuck at 20) **and breaks long reads.** → Decided as **S2**: fixed 20-byte chunks and an `info` under 180 bytes, so `bless` is used as is.
+
+### Step 0.3: 🔧 HARDWARE (laptop B): install check on Ubuntu 26.04 / Python 3.14
+
+- **Goal:** confirm that the package installs on laptop 2's Python 3.14 and that the configurator's libraries work there, before we build on them (plan_v5, D1).
+- **Files:** none. The results go into this plan, and laptop 2's column into the README "Tested on" table.
+- **You do (laptop 2):**
+  ```bash
+  lsb_release -rs; python3 --version                  # 26.04, Python 3.14.x
+  python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+  python -c "import cryptography, bleak; print(cryptography.__version__, bleak.__version__)"
+  python -c "from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey as K; K.generate(); print('x25519 ok')"
+  pytest                                              # same result as on laptop 1
+  ```
+- **Watch for:** there is one distribution, so `pip` also installs `bless` (and its D-Bus libraries) on laptop B. It only has to install there, not run. If `bless` or `bleak` doesn't install on 3.14 (no wheel and a failing source build), we stop and decide; one option is an optional `device` extra, which changes DESIGN §8.
+- **Implements:** plan_v5 D1. SPEC §2.
 
 ---
 
@@ -210,11 +225,11 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the abstraction that lets one protocol implementation run over BLE, a Unix socket or memory.
 - **Files:** `src/teton_common/transport.py`, `src/teton_common/memory_transport.py`, `tests/test_memory_transport.py`.
 - **Content:**
-  - `DeviceTransport` (`start`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`), as in DESIGN §5 (review Q2, simplified by S2 and S3: no connection events, no chunk size).
+  - `DeviceTransport` (`start`, `set_advertising`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`), as in DESIGN §5 (review Q2, simplified by S2 and S3: no connection events, no chunk size; `set_advertising` added by D2).
   - `info` is a plain read of raw JSON and is not framed (SPEC §4.1).
   - A small `FramedChannel` helper that combines a transport, `framing.frame` and one `Reassembler` per channel, so framing sits above the transport.
-  - `memory_transport.pair()` returns a connected device end and client end.
-- **Tests:** `read_info()` returns what `set_info()` set; messages arrive on the right channel in order; large messages go through framing in 20-byte chunks; after `close()`, sending raises an error on both ends.
+  - `memory_transport.pair()` returns a device end and a client end. The client can only connect while the device end is advertising, and turning advertising off keeps an existing connection.
+- **Tests:** `read_info()` returns what `set_info()` set; messages arrive on the right channel in order; large messages go through framing in 20-byte chunks; after `close()`, sending raises an error on both ends; `connect()` fails while advertising is off; `set_advertising(False)` doesn't drop a connected client.
 - **Verify:** `pytest tests/test_memory_transport.py -v`
 - **Implements:** DESIGN §1 (principles), §5 (`DeviceTransport`, `ClientTransport`).
 
@@ -227,19 +242,20 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the device always knows its state, invalid transitions are impossible, and identity and provisioning survive restarts.
 - **Files:** `src/teton_device/state.py`, `src/teton_device/storage.py`, `tests/test_state.py`, `tests/test_storage.py`.
 - **Content:**
-  - `StateMachine` with the DESIGN §4 transitions. `transition(to)` raises `InvalidTransition` on a forbidden transition, and every transition is logged.
-  - `Storage(state_dir)` has `load_or_create()`, which creates `device_id` (`TETON-` + 6 hex) and a setup code, creates the directory `0700` and the file `0600`, and writes atomically (temp file + `os.replace`). It also has `mark_provisioned()` and `rotate_code()`.
+  - `StateMachine` with the DESIGN §4 transitions, including `UNPROVISIONED → ADVERTISING` on [P], `ADVERTISING → UNPROVISIONED` when the window expires, and `PROVISIONED → UNPROVISIONED` on reset. `transition(to)` raises `InvalidTransition` on a forbidden transition, and every transition is logged.
+  - `Storage(state_dir)` has `load_or_create()`, which creates `device_id` (`TETON-` + 6 hex) and a setup code, creates the directory `0700` and the file `0600`, and writes atomically (temp file + `os.replace`). It also has `mark_provisioned()` and `reset()` (new setup code, `provisioned` cleared, `device_id` kept), used by the [R] button.
   - `state.json` also holds a `provisioned` flag. SPEC §3 lists only `device_id` and `setup_code`, but DESIGN §4 requires it to be persisted.
-- **Tests:** every allowed transition; a set of forbidden ones; the state after reload when provisioned; the permissions are 0700 and 0600; the file is created once and reused afterwards; `rotate_code` changes the code but keeps `device_id`; a corrupt `state.json` gives a clear error.
+- **Tests:** every allowed transition; a set of forbidden ones; the state after reload when provisioned; the permissions are 0700 and 0600; the file is created once and reused afterwards; `reset` changes the code, clears `provisioned` and keeps `device_id`; a corrupt `state.json` gives a clear error.
 - **Verify:** `pytest tests/test_state.py tests/test_storage.py -v`
 - **Depends on:** Q13 (the state names, and CONNECTED vs PROVISIONED).
 - **Implements:** SPEC §3 (identity, storage, rotation). DESIGN §4, §7 (`state`).
+- **Code to update:** the `DeviceState.PROVISIONED` comment in `protocol.py` still says the process exits (S4); since D2 the device stays on.
 
 ### Step 2.2: Setup code display (QR)
 
 - **Goal:** print the code, the terminal QR and the "demo only" note.
 - **Files:** `src/teton_device/qr.py`, `tests/test_qr.py`.
-- **Content:** `qr_payload(device_id, code)` returns `TETON:v1;id=…;code=…`. `render(device_id, code) -> str` returns the formatted code, an ASCII QR (from `qrcode`) and the exact note text from SPEC §3.
+- **Content:** `qr_payload(device_id, code)` returns `TETON:v1;id=…;code=…`. `render(device_id, code) -> str` returns the formatted code, an ASCII QR (from `qrcode`) and the exact note text from SPEC §3. It is printed on start and after every reset.
 - **Tests:** the payload format; the output contains the formatted code and the note.
 - **Verify:** `pytest tests/test_qr.py -v`, then `python -c "from teton_device.qr import render; print(render('TETON-3F9A2C','7K2MQX9D4HTRB8WZ'))"` and scan the QR with your phone camera; it should show the payload text.
 - **Depends on:** Q14 (whether the code in the QR has dashes).
@@ -324,25 +340,49 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - A command before the handshake ends the session.
   - 300 s idle ends the session, with a fake clock.
 - **Verify:** `pytest tests/test_session.py -v`
-- **Depends on:** Q4 (how failures are counted, and retyping the code), Q5 (rate-limit reply), Q6 (`bad_request` vs ending the session).
+- **Depends on:** Q4 (how failures are counted, and retyping the code), Q5 (rate-limit reply), Q6 (`bad_request` vs ending the session), Q22 (`hello` after the window expired).
 - **Implements:** SPEC §5.1, §5.4, §6.2, §6.3. DESIGN §3, §5 (`DeviceSession`), §6.
 
-### Step 2.7: Device service (orchestrator)
+### Step 2.7: Buttons and status line (`buttons.py`)
 
-- **Goal:** tie the pieces together: the state machine, persistence, and finishing after success.
+- **Goal:** the device's only input, single keys acting as physical buttons, plus its status "LED", all testable without a terminal (plan_v5, D2).
+- **Files:** `src/teton_device/buttons.py`, `tests/test_buttons.py`.
+- **Content (DESIGN §4.1):**
+  - `Button` (`PAIR`, `RESET`, `STATUS`, `POWER`) and a key mapping: `p`, `r`, `s`, `q`, case-insensitive. Every other key is ignored, so no text is ever collected.
+  - `TerminalButtons`: `tty.setcbreak` + `loop.add_reader` on stdin, original `termios` settings restored in a `finally`. Cbreak, not raw, so Ctrl+C stays a normal SIGINT. `QueueButtons`: the in-memory `ButtonSource` for tests.
+  - `PairingWindow(clock, duration_s=300)` and `ResetDetector(clock, within_s=3)`: pure, with an injected clock.
+  - `ButtonController(buttons, actions, clock)`: maps buttons to `DeviceActions` (DESIGN §5), with a 1 s tick for the countdown and window expiry.
+  - `Led` and `StatusLine(stream)`: the LED priority from DESIGN §4.1; one redrawn line on a terminal, plain lines on a pipe.
+- **Tests (injected button events, fake clock, fake `DeviceActions`):**
+  - [P] opens the window and turns advertising on; after 300 s the tick turns it off; [P] at 200 s restarts the window, so it is still open at 400 s.
+  - [R] once does nothing but show "Press reset again to confirm"; [R] twice within 3 s calls `reset()`; two presses 4 s apart don't.
+  - [P] on a provisioned device shows "Already connected. Hold reset to set up again." and doesn't turn advertising on.
+  - [S] prints the status text with the remaining time; [Q] calls `power_off()`.
+  - Other keys are ignored; the key mapping is case-insensitive.
+  - LED priority for each combination; `StatusLine` writes escape codes only to a terminal.
+  - `TerminalButtons` restores the terminal settings, tested on a pseudo-terminal (`os.openpty`), so no real keyboard is needed.
+- **Verify:** `pytest tests/test_buttons.py -v`. You try the real keys in Step 5.2.
+- **Depends on:** Q21 (reset outside `PROVISIONED`), Q23 (no terminal, the QR scrolling away).
+- **Implements:** SPEC §9.1 (buttons, LED). DESIGN §4.1, §5 (`ButtonSource`, `DeviceActions`).
+
+### Step 2.8: Device service (orchestrator)
+
+- **Goal:** tie the pieces together: the state machine, persistence, the buttons and the pairing window.
 - **Files:** `src/teton_device/service.py`, `tests/test_service.py`.
 - **Content:**
-  - `DeviceService(transport, wifi, storage, clock)`:
-    - `run()` loads state, shows the code, sets `info`, starts the transport and feeds incoming messages to the session.
-    - On an already provisioned device it prints "Provisioned. Run `teton-device reset` to set up again." and returns without starting the transport (S4).
+  - `DeviceService(transport, wifi, storage, buttons, clock)` implements `DeviceActions`:
+    - `run()` loads state, shows the code + QR, sets `info`, starts the transport **without advertising**, and runs the `ButtonController` and the session together until [Q] or Ctrl+C.
+    - `set_advertising(on)` follows the pairing window. When the window closes during a session, the session may finish; when it ends, the state goes to `UNPROVISIONED` (DESIGN §4).
+    - `reset()` deletes the `teton-*` profiles through `WifiBackend` (never `nmcli` directly), calls `Storage.reset()`, prints the new code + QR and goes to `UNPROVISIONED` with advertising off.
     - A connection attempt that has started always finishes, even if the configurator has gone (DESIGN §4).
-    - On success it persists `provisioned`, waits up to 10 s for the configurator to stop sending, closes the transport (which ends advertising) and returns (S4).
+    - On success it persists `provisioned`, turns advertising off before the configurator disconnects, and stays on in `PROVISIONED` (D2, replacing the exit of S4).
+    - Started on an already provisioned device it stays on, green LED, without advertising.
   - No connection tracking and no `busy`: the radio allows one configurator at a time (S1, S3).
-  - Transport errors never crash the service.
-- **Tests (memory transport):** the happy path ends `PROVISIONED` and the transport is closed; a run on a provisioned state doesn't start the transport; a second `hello` mid-session starts a new session; a failed attempt rolls back and the session stays usable.
+  - Transport errors never crash the service. Power off closes the transport and restores the terminal.
+- **Tests (memory transport, `QueueButtons`, fake clock):** nothing is advertised before [P]; the happy path after [P] ends `PROVISIONED` with advertising off and the service still running; a provisioned state doesn't advertise, even after [P]; a session survives window expiry and the device returns to `UNPROVISIONED` when it ends; a second `hello` mid-session starts a new session; a failed attempt rolls back and the session stays usable; [R][R] calls `forget`, rotates the code and leaves advertising off; [Q] closes the transport.
 - **Verify:** `pytest tests/test_service.py -v`
-- **Depends on:** Q12 (only the part about `reset` while `run` is active).
-- **Implements:** SPEC §5.4, §8.5, §8.6, §9.1. DESIGN §4, §6.
+- **Depends on:** Q21, Q22.
+- **Implements:** SPEC §4, §5.4, §8.5, §8.6, §9.1. DESIGN §4, §6.
 
 ---
 
@@ -352,7 +392,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 - **Goal:** every message the technician can see, in one file: one sentence plus a next action.
 - **Files:** `src/teton_configurator/ui_text.py`, `tests/test_ui_text.py`.
-- **Content:** the prompts, the progress lines, `failure_text(reason)` with the SPEC §7 texts, error-code texts (`unsupported_security`, `bad_request`, rate-limited), wrong code / wrong device, and "no device found".
+- **Content:** the prompts, the progress lines, `failure_text(reason)` with the SPEC §7 texts, error-code texts (`unsupported_security`, `bad_request`, rate-limited), wrong code / wrong device, "press the pairing button on the device", and "No device found. Press the pairing button on the device and try again."
 - **Tests:** every `FailureReason` and `ErrorCode` has a text (so a newly added enum value fails the test until it gets one); no text contains jargon such as "nmcli", "GATT" or "exception".
 - **Verify:** `pytest tests/test_ui_text.py -v`
 - **Implements:** SPEC §7, §9.2. CLAUDE.md "plain language".
@@ -379,7 +419,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Content:**
   - `run_flow(discover, connect, io)`, where `io` wraps `input` and `print`, so tests can script the answers.
   - The steps:
-    1. Pick a device.
+    1. Ask the technician to press the pairing button on the device, then pick a device.
     2. Type the code. On a wrong code, explain and offer to retype.
     3. Pick a network, or "Other (hidden) network".
     4. Enter the credentials for that security type (for Enterprise: an optional CA file path and an optional domain).
@@ -400,7 +440,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the whole system in one process, plus the test that enforces the secret-hygiene rule.
 - **Files:** `tests/test_end_to_end.py`, `tests/test_no_secrets_in_logs.py`, `tests/conftest.py` (shared fixtures).
 - **Tests:**
-  - **End to end:** the DESIGN §7 cases (PSK ok, wrong password then retry, wrong code, portal), plus Enterprise with and without a CA, a second `hello` restarting the session, and the rate limit.
+  - **End to end:** the DESIGN §7 cases (PSK ok, wrong password then retry, wrong code, portal), plus Enterprise with and without a CA, a second `hello` restarting the session, and the rate limit. Each run starts with an injected [P].
   - **No secrets in logs:** a full simulated run, including a wrong password and a wrong code, with logging captured at DEBUG. The test asserts that none of the PSK, the EAP password, the setup code (raw or formatted), the session keys or the base64 ciphertext appears anywhere in the output.
 - **Verify:** `pytest tests/test_end_to_end.py tests/test_no_secrets_in_logs.py -v`
 - **Implements:** SPEC §12 MUST #6 (unit tests list complete). DESIGN §7 (end to end, `log`).
@@ -421,7 +461,8 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - The socket lives at `$XDG_RUNTIME_DIR/teton-sim.sock`, falling back to a temp directory when the variable is unset (CI).
   - A stale socket file is removed at start.
   - Chunks are 20 bytes, exactly as on BLE (S2).
-- **Tests:** the server and client in one event loop on a socket in `tmp_path`; a full handshake + scan; the server serves one client at a time (a second client waits until the first leaves, like BLE).
+  - `set_advertising(False)` stops accepting new clients but keeps the connected one, like BLE (D2).
+- **Tests:** the server and client in one event loop on a socket in `tmp_path`; a full handshake + scan; the server serves one client at a time (a second client waits until the first leaves, like BLE); a client can't connect while advertising is off.
 - **Verify:** `pytest tests/test_sim_transport.py -v`
 - **Implements:** SPEC §10 (transport).
 
@@ -430,22 +471,22 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the real commands of SPEC §9.
 - **Files:** `src/teton_device/cli.py`, `src/teton_configurator/cli.py`, `tests/test_cli.py`.
 - **Content:**
-  - `teton-device run [--simulate] | reset | show-code`, with `--state-dir` and `--verbose`.
+  - `teton-device run [--simulate] [--state-dir PATH] [--verbose]`. There are no other subcommands: reset is the [R] button of Step 2.7, and the code + QR are printed on start and after every reset (D2).
   - `teton-configurator [--simulate] [--verbose]`.
   - `run` without `--simulate` imports BLE lazily. Until Phase 6 it prints a clear "BLE transport not available yet".
-  - `reset` deletes the `teton-*` profiles through `WifiBackend` (never `nmcli` directly) and rotates the code.
-  - Ctrl+C exits cleanly.
-- **Tests:** argument parsing; `show-code` prints the code and the note; `reset` with the fake backend rotates the code and calls `forget`; `--state-dir` is respected.
+  - `run` uses `TerminalButtons` in both modes. [Q] and Ctrl+C exit cleanly and restore the terminal.
+- **Tests:** argument parsing; `reset` and `show-code` are rejected as unknown commands; `--state-dir` is respected; `run --simulate` with `QueueButtons` ([P], then [Q]) starts and stops cleanly.
 - **Verify (two terminals, any machine):**
   ```bash
   # terminal 1
   teton-device run --simulate --state-dir /tmp/teton-sim
+  # press P: the status line turns blinking blue with a 5:00 countdown
   # terminal 2
   teton-configurator --simulate
   # use the code printed in terminal 1; pick Home-PSK; password correct-horse-battery → "Connected"
   # try a wrong password first → plain-language failure, then retry works
+  # terminal 1: status line solid green; P → "Already connected…"; S → state, SSID, IP; R R → new code + QR; Q → exits
   ```
-- **Depends on:** Q12 (only the part about `reset` while `run` is active).
 - **Implements:** SPEC §9.1, §9.2, §10. SPEC §12 SHOULD #8 (first half).
 
 ---
@@ -458,10 +499,13 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Files:** `src/teton_device/gatt_server.py`, `tests/test_gatt_server.py`.
 - **Content:**
   - A `bless` server with the 4 characteristics from SPEC §4, no encryption flags (no pairing), the local name `Teton-XXXX` and the service UUID in the advertisement.
-  - Implements `DeviceTransport` with `bless` used as is (S2): `start` registers the service and advertises, `set_info` sets the `info` value (under 180 bytes), `send` notifies, `close` stops the server, which removes the advertisement (S4).
+  - Implements `DeviceTransport` with `bless` used as is (S2): `start` registers the service without advertising, `set_advertising` registers or unregisters the advertisement (as the spike did with `server.app.start_advertising` / `stop_advertising`), `set_info` sets the `info` value (under 180 bytes), `send` notifies, `close` stops the server. The spike noted that `bless`'s `stop()` expects an active advertisement, so `close` must handle advertising being off.
   - `bless` is imported lazily.
 - **Tests (no radio):** importing `teton_device` and running the sim and memory paths doesn't import `bless`; the pure helpers (characteristic table, `info` size limit) are tested.
-- **Verify (🔧 laptop A + phone):** `teton-device run`, then in nRF Connect: the service is visible, `info` reads as JSON, and the other characteristics are present.
+- **Verify (🔧 laptop A + phone):** `teton-device run`, then in nRF Connect:
+  - nothing is advertised until you press [P];
+  - after [P] the service is visible, `info` reads as JSON, and the other characteristics are present;
+  - connect, then wait for the 5-minute window to expire: the connection keeps working; disconnect: advertising does **not** come back (check with `btmon` for `LE Set Extended Advertising Enable`).
 - **Implements:** SPEC §4. DESIGN §2 (`gatt_server.py`).
 
 ### Step 6.2: BLE configurator transport (`ble_client.py`)
@@ -474,7 +518,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - Writes use write-with-response, so chunks arrive in order.
   - `bleak` is imported lazily.
 - **Tests (no radio):** the pure helpers (signal to bars, device list formatting); importing without `bleak` used.
-- **Verify (🔧 both laptops):** laptop A `teton-device run`; laptop B `teton-configurator`. The device appears; the code is accepted; the scan list shows the real networks around laptop A. Stop before entering credentials. That comes in 6.3.
+- **Verify (🔧 both laptops):** laptop A `teton-device run`, then press [P]; laptop B `teton-configurator`. The device appears; the code is accepted; the scan list shows the real networks around laptop A. Stop before entering credentials. That comes in 6.3.
 - **Implements:** SPEC §4, §9.2 (steps 1–4). DESIGN §2 (`ble_client.py`).
 
 ### Step 6.3: 🔧 HARDWARE: real Wi-Fi run and evidence
@@ -483,7 +527,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Files:** `docs/evidence/` (logs, screenshots, `.btsnoop` capture, `README.md` index), and `tests/fixtures/nmcli/` (real recorded outputs, anonymised).
 - **You do:**
   1. Phone: turn on the hotspot (WPA2-Personal; also try WPA3 if the phone offers it). Pick a password you don't use anywhere else, because it will appear in evidence notes.
-  2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop` in one terminal, and `teton-device run --verbose 2>&1 | tee docs/evidence/device-run.log` in another.
+  2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop` in one terminal, and `teton-device run --verbose 2>&1 | tee docs/evidence/device-run.log` in another, then press [P].
   3. Laptop B: `teton-configurator 2>&1 | tee docs/evidence/configurator-run.log`.
   4. Run the scenarios:
      - **wrong setup code:** a clear message, and nothing else is sent;
@@ -492,7 +536,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   5. Check the capture: `btmon -r docs/evidence/run-psk.btsnoop | grep -c "<hotspot password>"` gives `0`. Also grep for the SSID; the SSID travels encrypted too, so it should also be 0.
   6. Take screenshots of both terminals.
   7. Record `nmcli` outputs for the fixtures: the wrong-password and unknown-SSID errors, and the scan output.
-  8. On laptop A afterwards: `teton-device reset` to rejoin your normal Wi-Fi.
+  8. On laptop A afterwards: press [R] twice to delete the Teton profile and rejoin your normal Wi-Fi, then [Q].
 - **Notes about laptop A:**
   - Laptop A has many saved Wi-Fi profiles with autoconnect on. After a failed attempt, NetworkManager reconnects one of them, which is the rollback SPEC §8.6 expects.
   - After success, a home network in range with a higher autoconnect priority could take over later (Q17). For a clean demo, run it away from your home network, or temporarily `nmcli connection modify <home> connection.autoconnect no`. That choice is yours to make.
@@ -508,7 +552,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 - **Goal:** ruff + pytest on every push and PR.
 - **Files:** `.github/workflows/ci.yml` (a new directory, required by SPEC §12 #8).
-- **Content:** `ubuntu-24.04`, Python 3.12, `pip install -e ".[dev]"`, `ruff check .`, `ruff format --check .`, `pytest`. No Bluetooth needed, because of the lazy imports.
+- **Content:** `ubuntu-24.04`, a Python matrix of **3.12 and 3.14** through `actions/setup-python` (D1), `pip install -e ".[dev]"`, `ruff check .`, `ruff format --check .`, `pytest`. 3.12 is the device's version and catches any use of newer features; 3.14 is laptop 2's. No Bluetooth needed, because of the lazy imports.
 - **Verify:** after you push a branch, the Actions tab shows a green run.
 - **Depends on:** Q16 (whether to move it earlier).
 - **Implements:** SPEC §12 SHOULD #8 (second half). DESIGN §7 (CI).
@@ -543,7 +587,8 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Content:**
   - **Unit:** a hardened unit (`ProtectSystem=strict`, `NoNewPrivileges=yes`, `StateDirectory=`, a minimal capability set) of `Type=notify`. The `sd_notify` message is sent with the standard library (a datagram on `$NOTIFY_SOCKET`), so no new dependency is needed.
   - **Polkit rule:** lets a `teton` service user manage NetworkManager connections and scan.
-  - **Preflight script:** the read-only checks from the README "Check your machine" section, each with a clear OK or FIX line.
+  - **Preflight script:** the read-only checks from the README "Check your machine" section, each with a clear OK or FIX line. It accepts Ubuntu 26.04 for the configurator role.
+  - **Buttons under systemd:** a service has no terminal, so no keys (Q23).
 - **Tests:** `bash -n scripts/preflight.sh`; `systemd-analyze verify deploy/teton-device.service`; a pytest for the `sd_notify` helper, against a temporary socket.
 - **Verify:** `scripts/preflight.sh` on both laptops prints all OK. Optionally (🔧, needs `sudo`, done by you): install the unit and run `systemctl start teton-device`.
 - **Implements:** SPEC §12 SHOULD #10. plan_v5 §11.1.
@@ -554,9 +599,9 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 ### Step 8.1: README
 
-- **Goal:** someone at Teton can reproduce everything from a stock Ubuntu 24.04 install.
+- **Goal:** someone at Teton can reproduce everything from a stock Ubuntu install (24.04 for the device, 24.04 or 26.04 for the configurator).
 - **Files:** `README.md`. The Requirements section already exists.
-- **Content:** the quickstart in simulation (2 terminals); the real demo per laptop; the Enterprise test; a troubleshooting table (adapter off or `rfkill`, the BlueZ GATT cache on the client, `bluetoothctl remove <addr>`, NetworkManager permissions, the `sudo` fallback for BlueZ, `btmon` needs root, a hotspot with no internet); the second laptop's column in "Tested on".
+- **Content:** both Ubuntu versions and the role of each laptop (the Requirements section already has them, D1); the device buttons and LED; the quickstart in simulation (2 terminals); the real demo per laptop; the Enterprise test; a troubleshooting table (adapter off or `rfkill`, the BlueZ GATT cache on the client, `bluetoothctl remove <addr>`, NetworkManager permissions, the `sudo` fallback for BlueZ, `btmon` needs root, a hotspot with no internet); the second laptop's column in "Tested on" (Ubuntu 26.04, Python 3.14, from Step 0.3).
 - **Verify:** you follow the README on the second laptop from scratch.
 - **Implements:** SPEC §12 MUST #7.
 
@@ -566,7 +611,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Files:** `docs/ARCHITECTURE.md`, `docs/evidence/README.md` (an index of the evidence).
 - **Content:**
   - The channel choice and rejected alternatives (from `research/channels.md` and plan_v5 §3).
-  - The trust bootstrap and its alternatives (plan_v5 §3b).
+  - The trust bootstrap and its alternatives (plan_v5 §3b), and the pairing window: the device is only reachable over BLE for a few minutes after someone physically presses a button, which shrinks the attack surface and is standard practice in real products (plan_v5, D2).
   - How credentials are protected in transit: the handshake, why 80 bits, a threat table, and what's out of scope.
   - The data flow and state machine.
   - Failure handling.
@@ -598,6 +643,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 | Step | Laptop A = laptop 1 (device) | Laptop B = laptop 2 (configurator) | Phone | Blocked by an environment problem? |
 |---|---|---|---|---|
+| 0.3 Install check on Python 3.14 | no | yes | no | possibly: wheels for 3.14 |
 | 2.5 Scan smoke test + stdin check | yes (any laptop) | no | no | no |
 | 0.2 BLE spike | yes | yes, **or** the phone with nRF Connect | optional | no; adapter role "peripheral" confirmed on laptop 1 |
 | 6.1 / 6.2 BLE transports | yes | yes | optional (nRF Connect) | no |
@@ -625,8 +671,11 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q15 | `busy` over BLE | Not needed: the radio allows one configurator at a time; `busy` removed (S1) |
 | Q19 | Stopping advertising | `DeviceTransport.close()` after success; the device exits (S4) |
 | Q20 | MTU and long reads with `bless` | Option C: fixed 20-byte chunks, `info` under 180 bytes, `bless` as is (S2) |
+| Q12 | `reset` while `run` is active | Gone (2026-10-13): there is no `reset` command, reset is the [R] button inside `run` (D2) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
+
+Added on 2026-10-13 (plan_v5): **D1** device on Ubuntu 24.04 / Python 3.12, configurator on 24.04 or 26.04 (laptop 2: Python 3.14), CI on both; **D2** no text input on the device, simulated buttons and LED, pairing window, the device stays on after success.
 
 ## Open questions
 
@@ -661,12 +710,20 @@ These are the questions still open after the first review and the spike. Each on
 - Most phone hotspots now use **WPA2/WPA3 transition mode** (`SECURITY = "WPA2 WPA3"`). *Proposal:* map it to `wpa2-psk`, which works with transition mode.
 - Networks we can't join (WEP, OWE, WPA3-Enterprise): hide them from the scan list, or show them as "not supported"? *Proposal:* show them, marked "not supported", so the technician isn't left wondering why the network is missing.
 
-**Q12. `reset` while `run` is active (blocks 2.7, 5.2; the rest of Q12 was answered by S4).** S4 settled that `run` exits after success and exits at once on a provisioned device. What's left: `reset` is a separate command, so it could run while a `run` is still active (for example during a failed session). *Proposal:* keep it simple. `reset` only edits `state.json` and deletes the `teton-*` profiles, and the README says "stop `teton-device run` first". No lock file.
-
 **Q14. Setup code format inside the QR (blocks 2.2, minor).** SPEC §3 doesn't say whether `code=` in the QR payload has dashes. *Proposal:* the normalised 16 characters without dashes, because it's for machines.
 
 **Q16. CI earlier? (minor).** CI is SHOULD (Step 7.1) but takes about 15 minutes, and it would guard every PR from Phase 1 on. *Proposal:* move it to right after Step 0.2 (the spike). Otherwise it stays in Phase 7.
 
 **Q17. Autoconnect priority (affects the Step 6.3 demo, minor).** Laptop A has several saved networks with autoconnect on. SPEC §8.5 sets the Teton profile to autoconnect but says nothing about priority, so a known home network could win after a reboot. *Proposal:* give the `teton-*` profile `connection.autoconnect-priority 10` (a one-line SPEC addition). In production that matters less, because a fresh device has no other profiles.
+
+### Raised by the device buttons (D2, 2026-10-13)
+
+**Q21. [R][R] outside `PROVISIONED` (blocks 2.7, 2.8).** D2 defines reset from `PROVISIONED` only. A technician could also press it while unprovisioned, with the window open, or mid-session. *Proposal:* allow it in every state except `CONNECTING`, where it shows "Busy connecting. Try again in a moment." (a started attempt always finishes, DESIGN §4). Elsewhere it closes the window, drops any session and rotates the code, which is also how a technician would replace a code they think has leaked.
+
+**Q22. A new `hello` after the window expired (blocks 2.6, 2.8).** "An active session may finish" is clear for scan, credentials and retries. But a configurator that is still connected can also send a new `hello`, for example to retype the code (Q4). *Proposal:* accept a `hello` only while the window is open. After expiry the current session can finish, but a new handshake needs a new [P]. It's one check in the session, and it means the window really bounds when anyone can attempt a handshake.
+
+**Q23. No terminal, and the QR scrolling away (blocks 2.7; 7.3).**
+- Under systemd (Step 7.3) or with stdin redirected there is no terminal, so no buttons, and the device would never advertise. *Proposal:* `TerminalButtons` logs a warning and stays off. The unit file stays a hardening example, and the writeup says a real device uses GPIO buttons. A cheap option is mapping `SIGUSR1` to [P] (`systemctl kill -s USR1 teton-device`); say if you want it.
+- With `show-code` gone, the code + QR are printed only on start and after a reset, so log lines scroll them away. *Proposal:* [S] also prints the code + QR again under the status. The code is on screen by design anyway (it stands in for the label).
 
 **Q18. Logging the Enterprise username (minor).** `identity` (e.g. `nurse01`) isn't in the redaction list. It isn't a secret, but in a hospital it is personal data. *Proposal:* add `identity` and `anonymous_identity` to the redaction keys.

@@ -60,7 +60,15 @@ class DeviceState(StrEnum):
     SESSION_ESTABLISHED = "session_established"
     CONNECTING = "connecting"
     CONNECTED = "connected"  # result sent, waiting for the configurator to leave
-    PROVISIONED = "provisioned"  # saved; the BLE server stops and the process exits
+    PROVISIONED = "provisioned"  # saved; advertising off, the device stays on (plan_v5 D2)
+
+
+class StatusState(StrEnum):
+    """`state` of a `{"type": "status"}` message (SPEC §6.3)."""
+
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    FAILED = "failed"
 
 
 class FailureReason(StrEnum):
@@ -97,6 +105,12 @@ class InternetStatus(StrEnum):
     NONE = "none"
     UNKNOWN = "unknown"
 
+
+# Sizes of handshake fields (SPEC §5.1) and of the envelope sequence number (SPEC §5.3).
+PUBLIC_KEY_BYTES: Final = 32  # X25519 public key
+HANDSHAKE_NONCE_BYTES: Final = 16
+CONFIRM_BYTES: Final = 32  # HMAC-SHA256 tag
+MAX_SEQ: Final = 2**64 - 1  # seq becomes the last 8 bytes of the AES-GCM nonce
 
 # Limits. Units are part of each name.
 CHUNK_SIZE_BYTES: Final = 20  # fixed, the minimum every BLE link supports (plan_v5 S2)

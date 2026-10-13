@@ -41,6 +41,7 @@ def test_enum_values_match_spec() -> None:
         "timeout",
     }
     assert {e.value for e in p.ErrorCode} == {"bad_request", "unsupported_security"}
+    assert [s.value for s in p.StatusState] == ["connecting", "connected", "failed"]
     assert {w.value for w in p.StatusWarning} == {"server_not_verified", "limited_internet"}
     assert {i.value for i in p.InternetStatus} == {"full", "limited", "none", "unknown"}
     assert [s.value for s in p.DeviceState] == [
@@ -77,3 +78,8 @@ def test_limits_match_spec() -> None:
     assert p.CONNECT_TIMEOUT_S == 45
     assert (p.HANDSHAKE_MAX_FAILURES, p.HANDSHAKE_BACKOFF_INITIAL_S) == (5, 30)
     assert p.HANDSHAKE_BACKOFF_MAX_S == 600
+
+
+def test_handshake_sizes_match_spec() -> None:
+    assert (p.PUBLIC_KEY_BYTES, p.HANDSHAKE_NONCE_BYTES, p.CONFIRM_BYTES) == (32, 16, 32)
+    assert p.MAX_SEQ == 0xFFFF_FFFF_FFFF_FFFF  # fits the 8-byte seq part of the nonce
