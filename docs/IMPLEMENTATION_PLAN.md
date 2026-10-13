@@ -227,7 +227,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Content:**
   - `DeviceTransport` (`start`, `set_advertising`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`), as in DESIGN §5 (review Q2, simplified by S2 and S3: no connection events, no chunk size; `set_advertising` added by D2).
   - `info` is a plain read of raw JSON and is not framed (SPEC §4.1).
-  - A small `FramedChannel` helper that combines a transport, `framing.frame` and one `Reassembler` per channel, so framing sits above the transport.
+  - A small `FramedTransport` helper that combines a transport, `framing.frame` and one `Reassembler` per channel, so framing sits above the transport.
   - `memory_transport.pair()` returns a device end and a client end. The client can only connect while the device end is advertising, and turning advertising off keeps an existing connection.
 - **Tests:** `read_info()` returns what `set_info()` set; messages arrive on the right channel in order; large messages go through framing in 20-byte chunks; after `close()`, sending raises an error on both ends; `connect()` fails while advertising is off; `set_advertising(False)` doesn't drop a connected client.
 - **Verify:** `pytest tests/test_memory_transport.py -v`
