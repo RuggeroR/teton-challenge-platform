@@ -58,7 +58,7 @@ No OS-level Bluetooth pairing or bonding is used (decision Q2).
 
 ### 4.1 Framing
 
-Every message on `session`, `command` and `status` is UTF-8 JSON, framed as `[u16 big-endian total length][payload]`, split into chunks of at most **20 bytes**. The receiver reassembles the chunks per characteristic. `info` is a single GATT read of raw JSON and is not framed.
+Every message on `session`, `command` and `status` is UTF-8 JSON, framed as `[u16 big-endian payload length][payload]` (the length counts the payload only, not the 2-byte prefix), split into chunks of at most **20 bytes**. The receiver reassembles the chunks per characteristic. `info` is a single GATT read of raw JSON and is not framed.
 - The chunk size is fixed at 20 bytes, the minimum every BLE link supports, so no MTU negotiation is needed (plan_v5, S2). Production would use the negotiated MTU − 3 (517 measured in the spike).
 - `info` must stay under 180 bytes, so it fits in one read with the MTU that Android and BlueZ negotiate automatically.
 - Maximum message size: 8192 bytes (fits a CA certificate PEM). Larger messages are an error.
