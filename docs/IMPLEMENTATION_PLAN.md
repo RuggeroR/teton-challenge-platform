@@ -671,6 +671,7 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q15 | `busy` over BLE | Not needed: the radio allows one configurator at a time; `busy` removed (S1) |
 | Q19 | Stopping advertising | `DeviceTransport.close()` after success; the device exits (S4) |
 | Q20 | MTU and long reads with `bless` | Option C: fixed 20-byte chunks, `info` under 180 bytes, `bless` as is (S2) |
+| Q18 | Logging the Enterprise username | Keep `identity` and `anonymous_identity` visible, for debugging Enterprise logins (2026-10-13). Not in the redaction list |
 | Q12 | `reset` while `run` is active | Gone (2026-10-13): there is no `reset` command, reset is the [R] button inside `run` (D2) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
@@ -725,5 +726,3 @@ These are the questions still open after the first review and the spike. Each on
 **Q23. No terminal, and the QR scrolling away (blocks 2.7; 7.3).**
 - Under systemd (Step 7.3) or with stdin redirected there is no terminal, so no buttons, and the device would never advertise. *Proposal:* `TerminalButtons` logs a warning and stays off. The unit file stays a hardening example, and the writeup says a real device uses GPIO buttons. A cheap option is mapping `SIGUSR1` to [P] (`systemctl kill -s USR1 teton-device`); say if you want it.
 - With `show-code` gone, the code + QR are printed only on start and after a reset, so log lines scroll them away. *Proposal:* [S] also prints the code + QR again under the status. The code is on screen by design anyway (it stands in for the label).
-
-**Q18. Logging the Enterprise username (minor).** `identity` (e.g. `nurse01`) isn't in the redaction list. It isn't a secret, but in a hospital it is personal data. *Proposal:* add `identity` and `anonymous_identity` to the redaction keys.
