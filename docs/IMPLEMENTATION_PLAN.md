@@ -258,7 +258,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Content:** `qr_payload(device_id, code)` returns `TETON:v1;id=…;code=…`. `render(device_id, code) -> str` returns the formatted code, an ASCII QR (from `qrcode`) and the exact note text from SPEC §3. It is printed on start and after every reset.
 - **Tests:** the payload format; the output contains the formatted code and the note.
 - **Verify:** `pytest tests/test_qr.py -v`, then `python -c "from teton_device.qr import render; print(render('TETON-3F9A2C','7K2MQX9D4HTRB8WZ'))"` and scan the QR with your phone camera; it should show the payload text.
-- **Depends on:** Q14 (whether the code in the QR has dashes).
+- **Decided:** Q14: `code=` is the normalised 16 characters, without dashes.
 - **Implements:** SPEC §3 (display).
 
 ### Step 2.3: Wi-Fi backend interface + fake backend
@@ -674,6 +674,7 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q18 | Logging the Enterprise username | Keep `identity` and `anonymous_identity` visible, for debugging Enterprise logins (2026-10-13). Not in the redaction list |
 | Q12 | `reset` while `run` is active | Gone (2026-10-13): there is no `reset` command, reset is the [R] button inside `run` (D2) |
 | Q13 | State names | Five states: `UNPROVISIONED`, `ADVERTISING`, `SESSION_ESTABLISHED`, `CONNECTING`, `PROVISIONED` (2026-10-14). No `FAILED` (a failure returns to `SESSION_ESTABLISHED`, the LED shows the last reason); no `CONNECTED` (`CONNECTING` goes straight to `PROVISIONED`); a handshake in progress stays `ADVERTISING`; `info.state` is the lowercase name (SPEC §6.1, DESIGN §4) |
+| Q14 | Dashes in the QR | None (2026-10-14): `code=` is the normalised 16 characters, the same value as stored and used as the HKDF salt; the printed code keeps the dashes (SPEC §3) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 
@@ -703,8 +704,6 @@ These are the questions still open after the first review and the spike. Each on
 - SPEC §6.2 accepts `open`, but `info.caps` (§6.1) and plan_v4 only mention PSK, SAE and PEAP. Is `open` in scope?
 - Most phone hotspots now use **WPA2/WPA3 transition mode** (`SECURITY = "WPA2 WPA3"`). *Proposal:* map it to `wpa2-psk`, which works with transition mode.
 - Networks we can't join (WEP, OWE, WPA3-Enterprise): hide them from the scan list, or show them as "not supported"? *Proposal:* show them, marked "not supported", so the technician isn't left wondering why the network is missing.
-
-**Q14. Setup code format inside the QR (blocks 2.2, minor).** SPEC §3 doesn't say whether `code=` in the QR payload has dashes. *Proposal:* the normalised 16 characters without dashes, because it's for machines.
 
 **Q16. CI earlier? (minor).** CI is SHOULD (Step 7.1) but takes about 15 minutes, and it would guard every PR from Phase 1 on. *Proposal:* move it to right after Step 0.2 (the spike). Otherwise it stays in Phase 7.
 

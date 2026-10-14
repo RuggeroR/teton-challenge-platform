@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -37,7 +37,7 @@ Out of scope for code (covered in the writeup instead): manufacturer certificate
 | Setup code | 16 characters of **Crockford base32** (`0-9 A-Z` without `I L O U`), i.e. 80 random bits from `secrets`, displayed as `XXXX-XXXX-XXXX-XXXX` |
 | Code input normalization | uppercase; remove spaces and `-`; map `O→0`, `I→1`, `L→1`; reject if not exactly 16 valid characters |
 | Storage | `state.json` in the state dir (default `~/.local/state/teton-device/`, dir `0700`, file `0600`) holding `device_id`, `setup_code` and the `provisioned` flag (so a provisioned device doesn't advertise again after a restart) |
-| Display | On `run` and after every reset, the device prints the code and a terminal QR with payload `TETON:v1;id=<device_id>;code=<code>`, plus the line: *"For demo purposes the code is shown on screen; in production it is printed on the device label."* The code + QR are the stand-in for the printed label |
+| Display | On `run` and after every reset, the device prints the code and a terminal QR with payload `TETON:v1;id=<device_id>;code=<code>`, where `<code>` is the normalised 16 characters without dashes (review Q14), plus the line: *"For demo purposes the code is shown on screen; in production it is printed on the device label."* The code + QR are the stand-in for the printed label |
 | Rotation | The [R] reset button (§9.1) generates a new setup code |
 | Input | The device never accepts typed text: no passwords, codes or commands at runtime. Its only inputs are the simulated buttons of §9.1 (plan_v5, D2) |
 

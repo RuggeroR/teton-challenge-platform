@@ -11,6 +11,7 @@ Decided before building the device core (`IMPLEMENTATION_PLAN.md` Phase 2, open 
 | Area | Before | v5 (decision) | Decided by |
 |---|---|---|---|
 | Device states (review Q13) | plan_v5 §5 had `FAILED(reason)`; DESIGN §4 had both `CONNECTED` and `PROVISIONED`; the handshake in progress and the `info.state` values were not defined | **Five states: `UNPROVISIONED`, `ADVERTISING`, `SESSION_ESTABLISHED`, `CONNECTING`, `PROVISIONED`.** No `FAILED` state: a failed attempt goes back to `SESSION_ESTABLISHED`, and the red LED comes from the last result the service keeps. No `CONNECTED` state: since D2, sending `connected`, saving and turning advertising off happen in one step, so `CONNECTING` goes straight to `PROVISIONED`. A handshake in progress is not a device state either: the device stays `ADVERTISING`, and the session tracks the handshake. `info.state` is the lowercase state name | Ruggero |
+| Setup code in the QR (review Q14) | Not specified whether `code=` has dashes | **No dashes: the normalised 16 characters**, the same value as in `state.json` and the HKDF salt. The QR is read by machines; the code printed next to it keeps the `XXXX-XXXX-XXXX-XXXX` form for people | Ruggero |
 
 ### v5 additions: platforms and device buttons (2026-10-13)
 
