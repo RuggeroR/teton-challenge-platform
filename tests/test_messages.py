@@ -46,6 +46,7 @@ SESSION_MESSAGES = [
     m.Confirm(confirm=TAG),
     m.HandshakeFailed(),
     m.Error(code=ErrorCode.BAD_REQUEST),
+    m.Error(code=ErrorCode.RATE_LIMITED, retry_after_s=30),
 ]
 COMMAND_MESSAGES = [
     m.Scan(),
@@ -264,6 +265,26 @@ def test_hidden_must_be_a_boolean() -> None:
 def test_status_fields_must_match_state(kwargs: dict[str, Any]) -> None:
     with pytest.raises(MessageError):
         m.Status(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"code": ErrorCode.RATE_LIMITED},  # needs retry_after_s
+        {"code": ErrorCode.BAD_REQUEST, "retry_after_s": 30},  # only with rate_limited
+        {"code": ErrorCode.RATE_LIMITED, "retry_after_s": 0},
+    ],
+)
+def test_retry_after_goes_with_rate_limited_only(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(MessageError):
+        m.Error(**kwargs)
+
+
+def test_rate_limited_wire_shape() -> None:
+    data = m.encode(m.Error(code=ErrorCode.RATE_LIMITED, retry_after_s=60))
+    assert json.loads(data) == {"type": "error", "code": "rate_limited", "retry_after_s": 60}
+    with pytest.raises(MessageError):
+        m.decode_session(b'{"type":"error","code":"rate_limited","retry_after_s":"60"}')
 
 
 def test_unknown_enum_values_are_rejected() -> None:

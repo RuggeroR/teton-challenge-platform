@@ -233,14 +233,29 @@ class Error:
 
     TYPE: ClassVar[str] = "error"
     code: ErrorCode
+    retry_after_s: int | None = None  # with rate_limited only: seconds until a new hello (Q5)
+
+    def __post_init__(self) -> None:
+        if (self.code == ErrorCode.RATE_LIMITED) != (self.retry_after_s is not None):
+            raise MessageError("retry_after_s goes with code rate_limited, and only with it")
+        if self.retry_after_s is not None and self.retry_after_s < 1:
+            raise MessageError("retry_after_s must be at least 1")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.TYPE, "code": self.code}
+        d: dict[str, Any] = {"type": self.TYPE, "code": self.code}
+        if self.retry_after_s is not None:
+            d["retry_after_s"] = self.retry_after_s
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Self:
-        _fields(d, ("code",))
-        return cls(code=_as_enum(d["code"], ErrorCode, "code"))
+        _fields(d, ("code",), ("retry_after_s",))
+        return cls(
+            code=_as_enum(d["code"], ErrorCode, "code"),
+            retry_after_s=_as_int(d["retry_after_s"], "retry_after_s")
+            if "retry_after_s" in d
+            else None,
+        )
 
 
 # ---------------------------------------------------------------------------

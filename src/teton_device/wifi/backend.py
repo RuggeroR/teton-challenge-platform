@@ -100,8 +100,9 @@ class WifiBackend(Protocol):
         deleted again (SPEC §8.6). Wi-Fi problems are a result, never an exception."""
         ...
 
-    async def forget(self, profile_name: str) -> None:
-        """Delete one profile. No error if it doesn't exist."""
+    async def forget_all(self) -> list[str]:
+        """[R][R]: delete every profile we created (name starts with teton-) and return
+        their names. Found by prefix, so it works after a restart too (review Q24)."""
         ...
 
 

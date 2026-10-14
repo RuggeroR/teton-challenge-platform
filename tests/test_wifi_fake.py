@@ -127,13 +127,13 @@ async def test_wrong_security_type_is_rejected(wifi: FakeWifiBackend) -> None:
     assert result.reason == FailureReason.WRONG_PASSWORD
 
 
-async def test_forget_removes_the_profile_and_ignores_unknown_names(
-    wifi: FakeWifiBackend,
-) -> None:
+async def test_forget_all_removes_only_teton_profiles(wifi: FakeWifiBackend) -> None:
     await wifi.connect(psk("Home-PSK", HOME_PSK_PASSWORD), timeout_s=45)
-    await wifi.forget("teton-Home-PSK")
-    await wifi.forget("teton-never-existed")
-    assert wifi.profiles == set()
+    await wifi.connect(peap(), timeout_s=45)
+    wifi.profiles.add("My-Home-Wifi")  # a profile the owner made: never touched
+    assert await wifi.forget_all() == ["teton-Home-PSK", "teton-Hospital-EAP"]
+    assert wifi.profiles == {"My-Home-Wifi"}
+    assert await wifi.forget_all() == []  # nothing left: not an error
 
 
 async def test_delays_are_injectable(sleep: FakeSleep) -> None:

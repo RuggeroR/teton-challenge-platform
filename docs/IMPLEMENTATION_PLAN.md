@@ -266,7 +266,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the only door to Wi-Fi, and a fake that behaves like the SPEC §10 networks.
 - **Files:** `src/teton_device/wifi/backend.py`, `src/teton_device/wifi/fake.py`, `tests/test_wifi_fake.py`.
 - **Content:**
-  - The `WifiBackend` protocol (`scan`, `connect`, `forget`) and `Connectivity` (`verify`).
+  - The `WifiBackend` protocol (`scan`, `connect`, `forget_all`; Q24) and `Connectivity` (`verify`).
   - Result types: `Network`, `Credentials` (secrets use `repr=False`), `ConnectResult` (`ok`, `reason`, `ip`, `internet`, `warnings`; `internet` is needed by the `connected` status, SPEC §6.3) and `VerifyResult`.
   - `FakeWifiBackend` with `Home-PSK`, `Hospital-EAP`, `Cafe-Portal` and `Weak-Signal`. Its delays are injectable, so tests don't wait 45 s.
   - The `server_not_verified` warning rule (PEAP without a CA and without a domain) lives in one shared function. Both the fake and the real backend use it, so they can't disagree.
@@ -340,7 +340,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - A command before the handshake ends the session.
   - 300 s idle ends the session, with a fake clock.
 - **Verify:** `pytest tests/test_session.py -v`
-- **Depends on:** Q4 (how failures are counted, and retyping the code), Q5 (rate-limit reply), Q6 (`bad_request` vs ending the session), Q22 (`hello` after the window expired).
+- **Decided:** Q4 (every `hello` counts until its `confirm` succeeds; retyping is a new `hello`), Q5 (`rate_limited` + `retry_after_s`), Q6 (fails before decryption → end the session; after → `bad_request`), Q22 (`hello` only while the window is open).
 - **Implements:** SPEC §5.1, §5.4, §6.2, §6.3. DESIGN §3, §5 (`DeviceSession`), §6.
 
 ### Step 2.7: Buttons and status line (`buttons.py`)
@@ -379,9 +379,9 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
     - Started on an already provisioned device it stays on, green LED, without advertising.
   - No connection tracking and no `busy`: the radio allows one configurator at a time (S1, S3).
   - Transport errors never crash the service. Power off closes the transport and restores the terminal.
-- **Tests (memory transport, `QueueButtons`, fake clock):** nothing is advertised before [P]; the happy path after [P] ends `PROVISIONED` with advertising off and the service still running; a provisioned state doesn't advertise, even after [P]; a session survives window expiry and the device returns to `UNPROVISIONED` when it ends; a second `hello` mid-session starts a new session; a failed attempt rolls back and the session stays usable; [R][R] calls `forget`, rotates the code and leaves advertising off; [Q] closes the transport.
+- **Tests (memory transport, `QueueButtons`, fake clock):** nothing is advertised before [P]; the happy path after [P] ends `PROVISIONED` with advertising off and the service still running; a provisioned state doesn't advertise, even after [P]; a session survives window expiry and the device returns to `UNPROVISIONED` when it ends; a second `hello` mid-session starts a new session; a failed attempt rolls back and the session stays usable; [R][R] calls `forget_all`, rotates the code and leaves advertising off; [Q] closes the transport.
 - **Verify:** `pytest tests/test_service.py -v`
-- **Depends on:** Q21, Q22.
+- **Depends on:** Q21. (Q22 decided.)
 - **Implements:** SPEC §4, §5.4, §8.5, §8.6, §9.1. DESIGN §4, §6.
 
 ---
@@ -675,6 +675,11 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q12 | `reset` while `run` is active | Gone (2026-10-13): there is no `reset` command, reset is the [R] button inside `run` (D2) |
 | Q13 | State names | Five states: `UNPROVISIONED`, `ADVERTISING`, `SESSION_ESTABLISHED`, `CONNECTING`, `PROVISIONED` (2026-10-14). No `FAILED` (a failure returns to `SESSION_ESTABLISHED`, the LED shows the last reason); no `CONNECTED` (`CONNECTING` goes straight to `PROVISIONED`); a handshake in progress stays `ADVERTISING`; `info.state` is the lowercase name (SPEC §6.1, DESIGN §4) |
 | Q14 | Dashes in the QR | None (2026-10-14): `code=` is the normalised 16 characters, the same value as stored and used as the HKDF salt; the printed code keeps the dashes (SPEC §3) |
+| Q4 | Counting failed handshakes; retyping the code | Every accepted `hello` counts as a failure; a valid `confirm` resets the counter. Retyping is a new `hello` on the same connection (2026-10-14, SPEC §5.4) |
+| Q5 | Rate-limited reply | `error` `rate_limited` with `retry_after_s`, plaintext on `session`; a current session continues (2026-10-14, SPEC §5.4, §6.3) |
+| Q6 | `bad_request` vs ending the session | Fails before decryption → end the session; a decrypted but invalid command → `bad_request`, the session stays; not in `caps` → `unsupported_security`. One message at a time, so nothing is seen in `CONNECTING` (2026-10-14, SPEC §6.3, DESIGN §6) |
+| Q22 | `hello` after the window expired | Accepted only while the window is open; a pending handshake is dropped if the window closes before `confirm`. No reply when refused (2026-10-14, SPEC §5.4) |
+| Q24 | Deleting the Teton profiles on reset | `WifiBackend.forget_all()` deletes every `teton-*` profile, so it works after a restart (2026-10-14, raised in Step 2.3; DESIGN §5, SPEC §9.1) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 
@@ -684,19 +689,7 @@ Added on 2026-10-13 (plan_v5): **D1** device on Ubuntu 24.04 / Python 3.12, conf
 
 These are the questions still open after the first review and the spike. Each one is self-contained: it says which step it blocks, what the docs say and the option I would propose. I haven't resolved any of them. Answers that change a decision go into `plan_v5.md` (a new changelog row) + SPEC/DESIGN.
 
-### Contradictions between documents
-
-**Q6. `bad_request` vs ending the session (blocks 2.6).** SPEC §6.3 defines `error: bad_request`, which implies the session continues. DESIGN §6 says protocol violations (bad JSON, wrong state) end the session. *Proposal:*
-- a broken **envelope** (bad JSON, wrong `seq`, decryption failure) ends the session;
-- a **decrypted but invalid** command (a PSK of 5 characters, a missing field) or `scan` while `CONNECTING` gets `bad_request`, and the session stays open.
-
 ### Gaps (the docs don't say)
-
-**Q4. How failed handshakes are counted, and retyping the code (blocks 2.6, 3.3).** With a wrong code, the *configurator* detects the mismatch first (`confirm_d`) and aborts, so it never sends `confirm`. The device just sees `hello` followed by a disconnect. That is exactly what an attacker collecting tags for offline guessing would do. Two things are open:
-- Should "a `hello` not followed by a valid `confirm`" count as a failure for the rate limit? *Proposal:* yes.
-- SPEC §9.2 says "offer to retype the code". Should that be a new `hello` on the same connection, or a reconnect? *Proposal (updated after S3):* a new `hello` on the same connection. S3 already makes a new `hello` start a fresh session, so this needs no extra code and avoids a BLE reconnect. The device counts the unfinished handshake as a failure when the new `hello` arrives.
-
-**Q5. What a rate-limited device replies (blocks 2.6, 3.1).** SPEC §5.4 says "refuse handshakes for 30 s" but defines no message for it. *Proposal:* a new error code `rate_limited` with `retry_after_s`, so the technician sees "Too many wrong codes. Wait 30 seconds and try again." This is a SPEC change.
 
 **Q10. The 45 s timeout budget (blocks 2.4).** SPEC §7 says `timeout` = "no result within 45 s", and §8.3 says `connection up` has a 45 s timeout. Verification (the connectivity check + 2 pings) comes after that. Is 45 s the activation limit or the total? *Proposal:* 45 s for activation, plus up to 15 s for verification. The configurator waits up to 70 s before saying "took too long".
 
@@ -712,8 +705,6 @@ These are the questions still open after the first review and the spike. Each on
 ### Raised by the device buttons (D2, 2026-10-13)
 
 **Q21. [R][R] outside `PROVISIONED` (blocks 2.7, 2.8).** D2 defines reset from `PROVISIONED` only. A technician could also press it while unprovisioned, with the window open, or mid-session. *Proposal:* allow it in every state except `CONNECTING`, where it shows "Busy connecting. Try again in a moment." (a started attempt always finishes, DESIGN §4). Elsewhere it closes the window, drops any session and rotates the code, which is also how a technician would replace a code they think has leaked.
-
-**Q22. A new `hello` after the window expired (blocks 2.6, 2.8).** "An active session may finish" is clear for scan, credentials and retries. But a configurator that is still connected can also send a new `hello`, for example to retype the code (Q4). *Proposal:* accept a `hello` only while the window is open. After expiry the current session can finish, but a new handshake needs a new [P]. It's one check in the session, and it means the window really bounds when anyone can attempt a handshake.
 
 **Q23. No terminal, and the QR scrolling away (blocks 2.7; 7.3).**
 - Under systemd (Step 7.3) or with stdin redirected there is no terminal, so no buttons, and the device would never advertise. *Proposal:* `TerminalButtons` logs a warning and stays off. The unit file stays a hardening example, and the writeup says a real device uses GPIO buttons. A cheap option is mapping `SIGUSR1` to [P] (`systemctl kill -s USR1 teton-device`); say if you want it.

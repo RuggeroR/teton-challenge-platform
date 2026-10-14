@@ -69,6 +69,12 @@ class Storage:
             log.info("device_created", device_id=self._current.device_id)
         return self._current
 
+    @property
+    def current(self) -> StoredState:
+        """The state as last loaded or saved. The session reads the setup code here at
+        every hello, so a reset takes effect at once."""
+        return self._loaded()
+
     def mark_provisioned(self) -> StoredState:
         return self._save(replace(self._loaded(), provisioned=True))
 

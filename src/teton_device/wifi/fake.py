@@ -14,6 +14,7 @@ import structlog
 
 from teton_common.protocol import FailureReason, InternetStatus, Security
 from teton_device.wifi.backend import (
+    PROFILE_PREFIX,
     ConnectResult,
     Credentials,
     Network,
@@ -117,8 +118,10 @@ class FakeWifiBackend:
         log.debug("fake_wifi_result", ssid=creds.ssid, ok=result.ok, reason=result.reason)
         return result
 
-    async def forget(self, profile_name: str) -> None:
-        self.profiles.discard(profile_name)
+    async def forget_all(self) -> list[str]:
+        removed = sorted(p for p in self.profiles if p.startswith(PROFILE_PREFIX))
+        self.profiles -= set(removed)
+        return removed
 
     async def _attempt(self, creds: Credentials, timeout_s: float) -> ConnectResult:
         net = self._networks.get(creds.ssid)

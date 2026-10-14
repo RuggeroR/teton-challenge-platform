@@ -103,7 +103,16 @@ def test_no_temp_files_are_left_behind(state_dir: Path) -> None:
     assert [p.name for p in state_dir.iterdir()] == [STATE_FILE]
 
 
+def test_current_follows_every_change(state_dir: Path) -> None:
+    storage = make_storage(state_dir)
+    assert storage.load_or_create() == storage.current
+    assert storage.reset() == storage.current
+    assert storage.current.setup_code == CODES[1]
+
+
 def test_changes_need_a_loaded_state(state_dir: Path) -> None:
+    with pytest.raises(StorageError):
+        _ = make_storage(state_dir).current
     with pytest.raises(StorageError):
         make_storage(state_dir).mark_provisioned()
     with pytest.raises(StorageError):

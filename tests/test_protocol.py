@@ -40,7 +40,11 @@ def test_enum_values_match_spec() -> None:
         "no_internet",
         "timeout",
     }
-    assert {e.value for e in p.ErrorCode} == {"bad_request", "unsupported_security"}
+    assert {e.value for e in p.ErrorCode} == {
+        "bad_request",
+        "unsupported_security",
+        "rate_limited",
+    }
     assert [s.value for s in p.StatusState] == ["connecting", "connected", "failed"]
     assert {w.value for w in p.StatusWarning} == {"server_not_verified", "limited_internet"}
     assert {i.value for i in p.InternetStatus} == {"full", "limited", "none", "unknown"}

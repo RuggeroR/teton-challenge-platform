@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -76,7 +76,7 @@ Primitives (Python `cryptography`): X25519, HKDF-SHA256, HMAC-SHA256, AES-256-GC
    `{"type":"hello_reply","v":1,"device_id":"TETON-…","pub":<32 B>,"nonce":<16 B>,"confirm":<32 B confirm_d>}`
 3. Configurator derives the same keys and verifies `confirm_d`, using a constant-time comparison. If it doesn't match: show "setup code is wrong or this is not the right device" and abort. Otherwise it sends:
    `{"type":"confirm","confirm":<32 B confirm_c>}`
-4. Device verifies `confirm_c`. If it matches, the session is established and the device sends an encrypted `{"type":"ready"}` on `status`. If not, it sends `{"type":"handshake_failed"}` on `session`, counts a failure (§5.4) and disconnects.
+4. Device verifies `confirm_c`. If it matches, the session is established and the device sends an encrypted `{"type":"ready"}` on `status`. If not, it sends `{"type":"handshake_failed"}` on `session` and ends the session (the attempt was already counted when its `hello` arrived, §5.4).
 
 ### 5.2 Key derivation
 
@@ -106,8 +106,9 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 ### 5.4 Limits
 
 - One active session at a time, enforced by the radio: while a configurator is connected, the device does not advertise, so no other configurator can find or connect to it (plan_v5, S1). Simulation mode accepts one client at a time.
-- The device does not track BLE connections (plan_v5, S3). A new `hello` ends any previous session and starts a new one. A session also ends after 300 s without traffic, or on any protocol violation. After a disconnect, BlueZ restarts advertising by itself if the pairing window is still open (the advertisement is still registered). After the window has expired, the advertisement is unregistered and nothing comes back.
-- Failed handshakes: after 5 consecutive failures, refuse handshakes for 30 s, doubling each time up to 600 s. The counter resets on success. No permanent lockout.
+- The device does not track BLE connections (plan_v5, S3). A new `hello` ends any previous session and starts a new one; retyping the setup code is simply a new `hello` on the same connection. A session also ends after 300 s without traffic, or on any protocol violation (§6.3).
+- A `hello` is accepted only while the pairing window is open; otherwise it gets no reply and a current session continues. A handshake whose window closes before `confirm` arrives is dropped (review Q22). After a disconnect, BlueZ restarts advertising by itself if the pairing window is still open (the advertisement is still registered). After the window has expired, the advertisement is unregistered and nothing comes back.
+- Failed handshakes: every accepted `hello` counts as a failure until its `confirm` succeeds (a wrong code never reaches `confirm`: the configurator aborts first). After 5 consecutive failures, refuse new `hello`s for 30 s, doubling with each further failure up to 600 s. The counter resets on success. No permanent lockout. A refused `hello` gets `{"type":"error","code":"rate_limited","retry_after_s":<int>}` on `session`, and a current session continues (review Q4, Q5).
 
 ### 5.5 Secret hygiene
 
@@ -145,7 +146,9 @@ There is no reset command over BLE. Reset is the physical [R] button only (decis
 | `{"type":"status","state":"connecting"}` | Sent as soon as credentials are accepted |
 | `{"type":"status","state":"connected", …}` | `ip`, `internet` (`full` \| `limited` \| `none` \| `unknown`, as reported by NetworkManager for the Wi-Fi interface), `warnings` (list: `server_not_verified`, `limited_internet`) |
 | `{"type":"status","state":"failed","reason":…}` | `reason` from §7; the session stays open for a retry |
-| `{"type":"error","code":…}` | `bad_request`, `unsupported_security` |
+| `{"type":"error","code":…}` | `bad_request` (a decrypted command is invalid, e.g. a 5-character PSK; the session stays), `unsupported_security` (a security type not in `caps`, e.g. `open`). `rate_limited` with `retry_after_s` is sent in plaintext on `session` instead (§5.4) |
+
+**What ends a session (review Q6).** Anything that fails before a message is proven to come from the configurator ends the session: a broken envelope, an unexpected `seq`, a decryption failure, a command before the handshake, or a `confirm` without a `hello`. Anything that fails after decryption gets `bad_request`, and the session stays open. The device handles one message at a time, so a command sent during a Wi-Fi attempt is answered after its result. After `connected` the session ends.
 
 ## 7. Failure reasons
 
@@ -192,7 +195,7 @@ There are no `reset` or `show-code` subcommands: reset is the [R] button, and th
 | Key | Button | Behaviour |
 |---|---|---|
 | `P` | Pairing | Opens a 300 s pairing window and starts advertising. Pressing it again restarts the window at 300 s. When the window expires, advertising stops; a session in progress may finish. On a provisioned device it only shows "Already connected. Hold reset to set up again." |
-| `R` | Reset | Needs **two presses within 3 s** (a simulated long press); a single press shows "Press reset again to confirm." Then: delete the Teton NetworkManager profiles (through `WifiBackend`), generate a new setup code, print the new code + QR, and return to `UNPROVISIONED` with advertising off until [P] |
+| `R` | Reset | Needs **two presses within 3 s** (a simulated long press); a single press shows "Press reset again to confirm." Then: delete the Teton NetworkManager profiles, i.e. every profile named `teton-*` (`WifiBackend.forget_all()`, review Q24), generate a new setup code, print the new code + QR, and return to `UNPROVISIONED` with advertising off until [P] |
 | `S` | Status | Prints the state, SSID, IP, internet result and the remaining pairing time |
 | `Q` or Ctrl+C | Power | Clean shutdown: stop advertising, close the transport, restore the terminal, exit 0 |
 

@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -174,7 +174,7 @@ class DeviceActions(Protocol):                   # teton_device/buttons.py, impl
 class WifiBackend(Protocol):                     # teton_device/wifi/backend.py
     async def scan(self) -> list[Network]: ...
     async def connect(self, creds: Credentials, timeout_s: float) -> ConnectResult: ...
-    async def forget(self, profile_name: str) -> None: ...
+    async def forget_all(self) -> list[str]: ...                 # delete every teton-* profile (Q24)
 
 class Connectivity(Protocol):                    # teton_device/wifi/connectivity.py
     async def verify(self, interface: str) -> VerifyResult: ...   # ip, internet: full|limited|portal|none
@@ -182,6 +182,10 @@ class Connectivity(Protocol):                    # teton_device/wifi/connectivit
 class DeviceSession:                             # teton_device/session.py
     async def handle_session_msg(self, data: bytes) -> None: ...  # hello / confirm
     async def handle_command(self, data: bytes) -> None: ...      # encrypted scan / set_credentials
+    def check_idle(self) -> None: ...                             # called by the service's 1 s tick
+# One DeviceSession lives as long as the service and holds at most one session; a lock makes it
+# handle one message at a time, so a Wi-Fi attempt is a single step that always finishes.
+# HandshakeLimiter (same module): every hello counts until its confirm succeeds (Q4).
 
 class ProvisioningClient:                        # teton_configurator/client.py
     async def handshake(self, setup_code: str) -> DeviceInfo: ...
@@ -193,7 +197,8 @@ class ProvisioningClient:                        # teton_configurator/client.py
 
 ## 6. Error handling
 
-- Protocol violations (bad JSON, unexpected `seq`, decryption failure, wrong state) end the session, are logged with a reason, and never crash the service.
+- Protocol violations end the session, are logged with a reason, and never crash the service. The line is decryption (review Q6): anything that fails before a message is proven to come from the configurator (bad envelope JSON, unexpected `seq`, decryption failure, a command before the handshake, a `confirm` without `hello`) ends the session; a decrypted but invalid command gets `error: bad_request` and the session stays. Garbage on the plaintext `session` channel is logged and dropped.
+- Handshake refusals don't end a current session: a `hello` outside the pairing window gets no reply (Q22), and a rate-limited one gets `error: rate_limited` with `retry_after_s` (Q5).
 - Wi-Fi failures are not protocol errors. They become `status failed` with a reason (SPEC §7), and the session continues.
 - External commands (`nmcli`, `ping`) run through one runner function, with timeouts. Their raw output goes to the debug log only, never to the configurator, and is redacted. Secrets are passed through stdin, never in argv (SPEC §5.5).
 - The configurator turns every failure into one plain-language sentence plus a next action (retry, retype the code, contact IT).
@@ -208,7 +213,7 @@ class ProvisioningClient:                        # teton_configurator/client.py
 | `messages` | schema validation, bad input rejected | none |
 | `state` | allowed/forbidden transitions (incl. [P] and window expiry, [R][R] from PROVISIONED), persistence of PROVISIONED | none |
 | `buttons` | driven by injected button events and a fake clock: pairing window open / expire / restart; reset needs two presses within 3 s (one press, or two presses 4 s apart, do nothing); [P] ignored when provisioned; [S] and [Q]; key → button mapping, other keys ignored; LED priority; status line on a terminal and on a pipe | none |
-| `service` (with buttons) | nothing advertised before [P]; a session survives window expiry, and the device returns to UNPROVISIONED when it ends; [R][R] rotates the code, calls `forget` and turns advertising off; after success advertising is off and the device stays on | none |
+| `service` (with buttons) | nothing advertised before [P]; a session survives window expiry, and the device returns to UNPROVISIONED when it ends; [R][R] rotates the code, calls `forget_all` and turns advertising off; after success advertising is off and the device stays on | none |
 | `wifi/nmcli` | parse recorded `nmcli` outputs (fixtures) into networks and failure reasons; with a fake runner, no secret ever appears in argv; per-interface success rule (full / limited + gateway / portal / gateway down) | none |
 | `log` | no secret appears in captured logs during a full simulated run; error codes such as `bad_request` stay visible | none |
 | end to end | device service + configurator client over `memory_transport` with `wifi/fake` and an injected [P] (PSK ok, wrong password then retry, wrong code, portal) | none |

@@ -89,8 +89,9 @@ class FailureReason(StrEnum):
 class ErrorCode(StrEnum):
     """Codes in `{"type": "error", "code": ...}` (SPEC §6.3)."""
 
-    BAD_REQUEST = "bad_request"
+    BAD_REQUEST = "bad_request"  # a decrypted command is invalid; the session stays (Q6)
     UNSUPPORTED_SECURITY = "unsupported_security"
+    RATE_LIMITED = "rate_limited"  # too many handshakes; comes with retry_after_s (Q5)
 
 
 class StatusWarning(StrEnum):
