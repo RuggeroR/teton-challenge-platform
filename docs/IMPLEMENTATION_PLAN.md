@@ -267,7 +267,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Files:** `src/teton_device/wifi/backend.py`, `src/teton_device/wifi/fake.py`, `tests/test_wifi_fake.py`.
 - **Content:**
   - The `WifiBackend` protocol (`scan`, `connect`, `forget`) and `Connectivity` (`verify`).
-  - Result types: `Network`, `Credentials` (secrets use `repr=False`), `ConnectResult` (`ok`, `reason`, `ip`, `warnings`) and `VerifyResult`.
+  - Result types: `Network`, `Credentials` (secrets use `repr=False`), `ConnectResult` (`ok`, `reason`, `ip`, `internet`, `warnings`; `internet` is needed by the `connected` status, SPEC §6.3) and `VerifyResult`.
   - `FakeWifiBackend` with `Home-PSK`, `Hospital-EAP`, `Cafe-Portal` and `Weak-Signal`. Its delays are injectable, so tests don't wait 45 s.
   - The `server_not_verified` warning rule (PEAP without a CA and without a domain) lives in one shared function. Both the fake and the real backend use it, so they can't disagree.
 - **Tests:** the right password connects; a wrong password gives `wrong_password`; an unknown SSID gives `ssid_not_found`; Cafe-Portal gives `captive_portal`; Weak-Signal gives `timeout`; Hospital-EAP with a bad user gives `auth_failed`; PEAP without a CA or domain gives the warning; scan results are deduplicated, sorted and capped at 30.
