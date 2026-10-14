@@ -1,8 +1,16 @@
 # Teton Challenge: plan v5
 
-v5, 2026-10-11, amended 2026-10-13. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2); open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
+v5, 2026-10-11, amended 2026-10-13 and 2026-10-14. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phase 2; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
 
 ## Changelog
+
+### v5 additions: Phase 2 review questions (2026-10-14)
+
+Decided before building the device core (`IMPLEMENTATION_PLAN.md` Phase 2, open questions).
+
+| Area | Before | v5 (decision) | Decided by |
+|---|---|---|---|
+| Device states (review Q13) | plan_v5 §5 had `FAILED(reason)`; DESIGN §4 had both `CONNECTED` and `PROVISIONED`; the handshake in progress and the `info.state` values were not defined | **Five states: `UNPROVISIONED`, `ADVERTISING`, `SESSION_ESTABLISHED`, `CONNECTING`, `PROVISIONED`.** No `FAILED` state: a failed attempt goes back to `SESSION_ESTABLISHED`, and the red LED comes from the last result the service keeps. No `CONNECTED` state: since D2, sending `connected`, saving and turning advertising off happen in one step, so `CONNECTING` goes straight to `PROVISIONED`. A handshake in progress is not a device state either: the device stays `ADVERTISING`, and the session tracks the handshake. `info.state` is the lowercase state name | Ruggero |
 
 ### v5 additions: platforms and device buttons (2026-10-13)
 
@@ -219,7 +227,7 @@ Success rule (v5): Wi-Fi activated + IP + gateway reachable on the Wi-Fi interfa
 
 Transport interface (v5, simplified by S2 and S3): `DeviceTransport` (`start`, `set_advertising`, `set_info`, `on_receive`, `send`, `close`) and `ClientTransport` (`connect`, `read_info`, `on_receive`, `send`, `close`). Framing is applied above both. `set_advertising` was added by D2.
 
-Device state machine: `UNPROVISIONED → [P] → ADVERTISING → SESSION_ESTABLISHED → CONNECTING → CONNECTED` or `FAILED(reason) → back to SESSION_ESTABLISHED for retry`. If the pairing window expires without a session, `ADVERTISING → UNPROVISIONED`. On `CONNECTED` the device stops advertising and stays on in `PROVISIONED` (D2, replacing the exit of S4). [R][R] deletes the profile, generates a new setup code and returns to `UNPROVISIONED`, with advertising off until [P].
+Device state machine (review Q13): `UNPROVISIONED → [P] → ADVERTISING → SESSION_ESTABLISHED → CONNECTING → PROVISIONED` on success, or back to `SESSION_ESTABLISHED` for a retry on failure (there is no separate failed state; the LED shows the last reason). If the pairing window expires without a session, `ADVERTISING → UNPROVISIONED`. On success the device stops advertising and stays on in `PROVISIONED` (D2, replacing the exit of S4). [R][R] deletes the profile, generates a new setup code and returns to `UNPROVISIONED`, with advertising off until [P].
 
 Device buttons and LED (D2): the device takes no typed text. While `run` is active, single keys act as buttons ([P] pairing, [R] reset by double press, [S] status, [Q]/Ctrl+C power off) and a status line acts as the LED.
 
@@ -241,7 +249,8 @@ Configurator side:
 
 Test infrastructure:
 - Unit tests (pytest) for crypto, framing, state machine.
-- `--simulate` mode: in-memory transport + fake Wi-Fi backend, so the whole flow runs without radios (also used in CI, on Python 3.12 and 3.14, D1).
+- `--simulate` mode: a local Unix-socket transport + fake Wi-Fi backend, so the whole flow runs on one machine without radios (SPEC §10).
+- Unit and end-to-end tests: in-memory transport + fake Wi-Fi backend, in CI on Python 3.12 and 3.14 (D1).
 - Real runs: phone hotspot (PSK) and `hostapd` EAP on laptop B (Enterprise). `btmon` capture as evidence that only ciphertext goes over the air.
 
 ## 7. Repo layout

@@ -118,7 +118,7 @@ def _check_ssid(ssid: str) -> None:
         raise MessageError(f"ssid must be 1-{MAX_SSID_BYTES} bytes of UTF-8")
 
 
-def _check_device_id(device_id: str) -> None:
+def check_device_id(device_id: str) -> None:
     if not _DEVICE_ID_RE.fullmatch(device_id):
         raise MessageError(f"device_id must be {DEVICE_ID_PREFIX} + 6 uppercase hex characters")
 
@@ -170,7 +170,7 @@ class HelloReply:
     confirm: bytes
 
     def __post_init__(self) -> None:
-        _check_device_id(self.device_id)
+        check_device_id(self.device_id)
         _check_len(self.pub, PUBLIC_KEY_BYTES, "pub")
         _check_len(self.nonce, HANDSHAKE_NONCE_BYTES, "nonce")
         _check_len(self.confirm, CONFIRM_BYTES, "confirm")
@@ -282,7 +282,7 @@ class Info:
         return LOCAL_NAME_PREFIX + self.device_id[-4:]
 
     def __post_init__(self) -> None:
-        _check_device_id(self.device_id)
+        check_device_id(self.device_id)
         # Plan_v5 S2: `info` must fit in one GATT read.
         if len(encode(self)) > MAX_INFO_BYTES:
             raise MessageError(f"info must encode to at most {MAX_INFO_BYTES} bytes")

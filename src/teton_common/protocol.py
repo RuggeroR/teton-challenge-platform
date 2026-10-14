@@ -53,13 +53,16 @@ CAPS: Final[tuple[Security, ...]] = (
 
 
 class DeviceState(StrEnum):
-    """Device provisioning states (DESIGN §4), reported in `info.state`."""
+    """Device provisioning states (DESIGN §4), reported in `info.state`.
+
+    No state for a failed attempt (it goes back to SESSION_ESTABLISHED) or for a handshake
+    in progress (the device stays ADVERTISING; the session tracks it). Review Q13.
+    """
 
     UNPROVISIONED = "unprovisioned"
     ADVERTISING = "advertising"
     SESSION_ESTABLISHED = "session_established"
     CONNECTING = "connecting"
-    CONNECTED = "connected"  # result sent, waiting for the configurator to leave
     PROVISIONED = "provisioned"  # saved; advertising off, the device stays on (plan_v5 D2)
 
 

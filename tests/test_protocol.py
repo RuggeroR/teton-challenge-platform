@@ -49,8 +49,7 @@ def test_enum_values_match_spec() -> None:
         "advertising",
         "session_established",
         "connecting",
-        "connected",
-        "provisioned",
+        "provisioned",  # no "connected" state: CONNECTING goes straight here (review Q13)
     ]
 
 

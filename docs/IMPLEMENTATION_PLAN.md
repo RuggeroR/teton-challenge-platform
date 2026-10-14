@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 4, 2026-10-13. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5). If this plan disagrees with those documents, they win.
+Version 5, 2026-10-14. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -247,7 +247,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - `state.json` also holds a `provisioned` flag. SPEC §3 lists only `device_id` and `setup_code`, but DESIGN §4 requires it to be persisted.
 - **Tests:** every allowed transition; a set of forbidden ones; the state after reload when provisioned; the permissions are 0700 and 0600; the file is created once and reused afterwards; `reset` changes the code, clears `provisioned` and keeps `device_id`; a corrupt `state.json` gives a clear error.
 - **Verify:** `pytest tests/test_state.py tests/test_storage.py -v`
-- **Depends on:** Q13 (the state names, and CONNECTED vs PROVISIONED).
+- **Decided:** Q13: five states, no `CONNECTED` and no `FAILED`; a handshake in progress stays `ADVERTISING`.
 - **Implements:** SPEC §3 (identity, storage, rotation). DESIGN §4, §7 (`state`).
 - **Code to update:** the `DeviceState.PROVISIONED` comment in `protocol.py` still says the process exits (S4); since D2 the device stays on.
 
@@ -673,6 +673,7 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q20 | MTU and long reads with `bless` | Option C: fixed 20-byte chunks, `info` under 180 bytes, `bless` as is (S2) |
 | Q18 | Logging the Enterprise username | Keep `identity` and `anonymous_identity` visible, for debugging Enterprise logins (2026-10-13). Not in the redaction list |
 | Q12 | `reset` while `run` is active | Gone (2026-10-13): there is no `reset` command, reset is the [R] button inside `run` (D2) |
+| Q13 | State names | Five states: `UNPROVISIONED`, `ADVERTISING`, `SESSION_ESTABLISHED`, `CONNECTING`, `PROVISIONED` (2026-10-14). No `FAILED` (a failure returns to `SESSION_ESTABLISHED`, the LED shows the last reason); no `CONNECTED` (`CONNECTING` goes straight to `PROVISIONED`); a handshake in progress stays `ADVERTISING`; `info.state` is the lowercase name (SPEC §6.1, DESIGN §4) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 
@@ -683,14 +684,6 @@ Added on 2026-10-13 (plan_v5): **D1** device on Ubuntu 24.04 / Python 3.12, conf
 These are the questions still open after the first review and the spike. Each one is self-contained: it says which step it blocks, what the docs say and the option I would propose. I haven't resolved any of them. Answers that change a decision go into `plan_v5.md` (a new changelog row) + SPEC/DESIGN.
 
 ### Contradictions between documents
-
-**Q13. State names (blocks 2.1).**
-- plan_v5 §5 has a `FAILED(reason)` state; DESIGN §4 doesn't (failure is a transition back to `SESSION_ESTABLISHED`).
-- DESIGN §4 has both `CONNECTED` and `PROVISIONED`, without saying what the difference is.
-- SPEC §6.1 shows `info.state = "advertising"` but doesn't list the other values.
-- Nobody covers the moment between `hello` and `confirm` (handshake in progress).
-
-*Proposal:* follow DESIGN, with no `FAILED` state. `CONNECTED` is a short-lived state while the result is sent; `PROVISIONED` is persisted and means advertising is off. `info.state` uses the lowercase `DeviceState` values.
 
 **Q6. `bad_request` vs ending the session (blocks 2.6).** SPEC §6.3 defines `error: bad_request`, which implies the session continues. DESIGN §6 says protocol violations (bad JSON, wrong state) end the session. *Proposal:*
 - a broken **envelope** (bad JSON, wrong `seq`, decryption failure) ends the session;

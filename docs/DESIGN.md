@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.3, 2026-10-13. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -114,14 +114,15 @@ Configurator                                        Device
      │                               set_credentials   │ failed(reason): profile rolled back
      │                                      ▼          │
      │                                  CONNECTING ────┘
-     │                                      │ ok
+     │                                      │ ok: send connected, save, advertising off
      │                                      ▼
-     │                                  CONNECTED ──► PROVISIONED (persisted, stays on, LED green)
-     │                                                     │
-     └─────────────── [R][R] (reset button, double press) ─┘
+     │                                  PROVISIONED (persisted, stays on, LED green)
+     │                                      │
+     └──── [R][R] (reset button, double press)
 ```
 
-- `state.py` validates transitions and raises on invalid ones. Every transition is logged.
+- `state.py` validates transitions against one table and raises `InvalidTransition` on any other. Every transition is logged.
+- Five states, no more (review Q13). A failed attempt is not a state: it goes back to `SESSION_ESTABLISHED`, and the service keeps the last result for the red LED. There is no `CONNECTED` state: sending `connected`, saving `provisioned` and turning advertising off happen in one step, so `CONNECTING` goes straight to `PROVISIONED`. A handshake in progress is not a state either: the device stays `ADVERTISING` and `DeviceSession` tracks the handshake. `info.state` is the lowercase state name.
 - **The pairing window is not a state.** It is a timer owned by the service (`PairingWindow` in `buttons.py`): [P] opens it or restarts it at 300 s, and its expiry stops advertising. While it is open the device is in `ADVERTISING` or in a session. When it expires with no session, the device goes back to `UNPROVISIONED`. When it expires during a session, the session may finish (retries included); once that session ends (idle timeout or protocol error) the device goes back to `UNPROVISIONED`, not to `ADVERTISING`.
 - [P] in `PROVISIONED` doesn't change the state; it only shows "Already connected. Hold reset to set up again."
 - [R][R] in `PROVISIONED` deletes the Teton profiles, rotates the setup code, prints the new code + QR and goes to `UNPROVISIONED`, with advertising off until [P]. (Reset from the other states: open question Q21 in `IMPLEMENTATION_PLAN.md`.)
