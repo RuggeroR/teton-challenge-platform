@@ -1,0 +1,2 @@
+Error: Connection activation failed: 802.1X supplicant failed
+Hint: use 'journalctl -xe NM_CONNECTION=1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d + NM_DEVICE=wlp0s20f3' to get more information.

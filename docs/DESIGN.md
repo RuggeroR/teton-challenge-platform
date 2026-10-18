@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -63,9 +63,10 @@ src/teton_device/
   gatt_server.py              BLE transport (bless / BlueZ)
   sim_server.py               Unix-socket transport for --simulate
   wifi/backend.py             WifiBackend interface + result types
-  wifi/nmcli.py               NetworkManager implementation (subprocess)
+  wifi/nmcli.py               NetworkManager implementation: the one subprocess runner, nmcli
+                              parsing, NmcliBackend and NmcliConnectivity (the checks)
   wifi/fake.py                simulated networks for --simulate and tests
-  wifi/connectivity.py        IP, NM connectivity check, gateway ping
+  wifi/connectivity.py        the success rule: what the checks found -> ConnectResult (pure)
 src/teton_configurator/
   __main__.py, cli.py         `teton-configurator [--simulate]`
   flow.py                     guided steps and prompts
@@ -176,7 +177,7 @@ class WifiBackend(Protocol):                     # teton_device/wifi/backend.py
     async def connect(self, creds: Credentials, timeout_s: float) -> ConnectResult: ...
     async def forget_all(self) -> list[str]: ...                 # delete every teton-* profile (Q24)
 
-class Connectivity(Protocol):                    # teton_device/wifi/connectivity.py
+class Connectivity(Protocol):                    # teton_device/wifi/backend.py; NmcliConnectivity in nmcli.py
     async def verify(self, interface: str) -> VerifyResult: ...   # ip, internet: full|limited|portal|none
 
 class DeviceSession:                             # teton_device/session.py
@@ -200,7 +201,7 @@ class ProvisioningClient:                        # teton_configurator/client.py
 - Protocol violations end the session, are logged with a reason, and never crash the service. The line is decryption (review Q6): anything that fails before a message is proven to come from the configurator (bad envelope JSON, unexpected `seq`, decryption failure, a command before the handshake, a `confirm` without `hello`) ends the session; a decrypted but invalid command gets `error: bad_request` and the session stays. Garbage on the plaintext `session` channel is logged and dropped.
 - Handshake refusals don't end a current session: a `hello` outside the pairing window gets no reply (Q22), and a rate-limited one gets `error: rate_limited` with `retry_after_s` (Q5).
 - Wi-Fi failures are not protocol errors. They become `status failed` with a reason (SPEC §7), and the session continues.
-- External commands (`nmcli`, `ping`) run through one runner function, with timeouts. Their raw output goes to the debug log only, never to the configurator, and is redacted. Secrets are passed through stdin, never in argv (SPEC §5.5).
+- External commands (`nmcli`, `ping`) run through one runner function (`wifi/nmcli.run`), with a timeout on every call, `LC_ALL=C`, and a kill if the command overruns. Only `wifi/nmcli.py` runs commands; `wifi/connectivity.py` holds the pure success rule. Their raw output goes to the debug log only, never to the configurator, and is redacted. Secrets are passed through stdin, never in argv (SPEC §5.5).
 - The configurator turns every failure into one plain-language sentence plus a next action (retry, retype the code, contact IT).
 
 ## 7. Testing strategy

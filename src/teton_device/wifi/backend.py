@@ -48,6 +48,13 @@ def security_warnings(creds: Credentials) -> tuple[StatusWarning, ...]:
     return ()
 
 
+def rejected_reason(creds: Credentials) -> FailureReason:
+    """The network refused the secret: Enterprise rejects the login, Personal the key."""
+    if creds.security == Security.WPA2_EAP_PEAP:
+        return FailureReason.AUTH_FAILED
+    return FailureReason.WRONG_PASSWORD
+
+
 @dataclass(frozen=True)
 class ConnectResult:
     """The outcome of one attempt. Build it with success() or failure(), so a result is
@@ -87,7 +94,7 @@ class VerifyResult:
 
     ip: str | None  # IPv4 address, None if there is none
     connectivity: NmConnectivity
-    gateway_reachable: bool  # ping on the interface; only checked when not full
+    gateway_reachable: bool | None  # ping on the interface; None = not needed (full/portal)
 
 
 class WifiBackend(Protocol):

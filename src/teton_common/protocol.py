@@ -38,7 +38,7 @@ CHANNEL_UUIDS: Final[dict[Channel, str]] = {
 class Security(StrEnum):
     """Wi-Fi security types a configurator can ask for (SPEC §6.2)."""
 
-    OPEN = "open"  # in the SPEC, but not advertised in CAPS until Q11 is decided
+    OPEN = "open"  # valid on the wire, but out of scope: unsupported_security (review Q11)
     WPA2_PSK = "wpa2-psk"
     WPA3_SAE = "wpa3-sae"
     WPA2_EAP_PEAP = "wpa2-eap-peap"
@@ -123,6 +123,10 @@ MAX_INFO_BYTES: Final = 180  # `info` must fit in a single GATT read (SPEC §4.1
 REASSEMBLY_TIMEOUT_S: Final = 10  # drop a partial message after this (SPEC §4.1)
 SESSION_IDLE_TIMEOUT_S: Final = 300  # end a session without traffic (SPEC §5.4)
 CONNECT_TIMEOUT_S: Final = 45  # Wi-Fi activation limit (SPEC §7, §8.3)
+VERIFY_TIMEOUT_S: Final = 15  # IP, connectivity check and gateway ping, after activation (Q10)
+# How long the configurator waits for connected/failed after `connecting`: both limits above
+# plus 10 s for BLE and the profile setup (review Q10).
+CONFIGURATOR_RESULT_WAIT_S: Final = 70
 HANDSHAKE_MAX_FAILURES: Final = 5  # consecutive failures before backing off (SPEC §5.4)
 HANDSHAKE_BACKOFF_INITIAL_S: Final = 30
 HANDSHAKE_BACKOFF_MAX_S: Final = 600

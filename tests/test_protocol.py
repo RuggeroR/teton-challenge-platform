@@ -79,6 +79,9 @@ def test_limits_match_spec() -> None:
     assert p.REASSEMBLY_TIMEOUT_S == 10
     assert p.SESSION_IDLE_TIMEOUT_S == 300
     assert p.CONNECT_TIMEOUT_S == 45
+    assert p.VERIFY_TIMEOUT_S == 15  # review Q10
+    assert p.CONFIGURATOR_RESULT_WAIT_S == 70
+    assert p.CONFIGURATOR_RESULT_WAIT_S > p.CONNECT_TIMEOUT_S + p.VERIFY_TIMEOUT_S
     assert (p.HANDSHAKE_MAX_FAILURES, p.HANDSHAKE_BACKOFF_INITIAL_S) == (5, 30)
     assert p.HANDSHAKE_BACKOFF_MAX_S == 600
 

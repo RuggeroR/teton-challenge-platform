@@ -1,0 +1,12 @@
+Home-PSK:82:WPA2
+Home-PSK:41:WPA2
+Lab\:5G:77:WPA2 WPA3
+Back\\slash:30:WPA1 WPA2
+:65:WPA2
+Hospital-EAP:64:WPA2 802.1X
+Modern-SAE:55:WPA3
+Cafe-Open:50:
+Old-WEP:20:WEP
+Owe-Net:35:OWE
+WPA3-Ent:44:WPA3 802.1X
+Legacy:12:WPA1

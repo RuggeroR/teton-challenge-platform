@@ -284,9 +284,9 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
     - `build_add_args(creds, profile_name)` builds the arguments for PSK, SAE and PEAP: `802-1x.eap peap`, `phase2-auth mschapv2`, and `ca-cert` / `domain-suffix-match` when given.
     - `map_failure(returncode, stderr)` maps nmcli errors to a `FailureReason`. Unknown errors become `timeout`, and the raw text goes to the debug log only.
     - `parse_device_show(stdout)` reads the IP address, the gateway and the interface's own connectivity (`GENERAL.IP4-CONNECTIVITY`, e.g. `4 (full)`).
-    - `decide_result(...)` applies the success rule (review Q8): `portal` → `captive_portal`; `full` → success; anything else → success with the warning `limited_internet` if the gateway answers, otherwise `no_internet`.
+    - `decide_result(...)`, in `connectivity.py`, applies the success rule (review Q8): `portal` → `captive_portal`; `full` → success; anything else → success with the warning `limited_internet` if the gateway answers, otherwise `no_internet`.
   - **I/O wrapper:** `NmcliBackend(runner=...)` calls `nmcli` through one injectable async `runner` that applies a timeout to every call and can feed stdin. It implements the SPEC §8 sequence: scan, add `teton-<ssid>` **without secrets**, set the secret by piping `set …`/`save`/`quit` into `nmcli connection edit id teton-<ssid>` (review Q9), `up --wait 45`, verify, and on failure delete the profile.
-  - **Connectivity:** `NmConnectivity.verify(interface)` checks for an IPv4 address, runs `nmcli networking connectivity check` to refresh, reads the **interface's** connectivity, then pings the gateway **on that interface** (`ping -I <iface> -c 2 -W 2`) when it isn't `full` (review Q8).
+  - **Connectivity:** `NmcliConnectivity.verify(interface)`, in `nmcli.py` so nmcli is called from one module only, checks for an IPv4 address, runs `nmcli networking connectivity check` to refresh, reads the **interface's** connectivity, then pings the gateway **on that interface** (`ping -I <iface> -c 2 -W 2`) when it isn't `full` (review Q8).
   - **CA certificate:** a supplied CA is written to `<state_dir>/certs/<profile>.pem` (mode `0600`), because NetworkManager needs a file path.
   - **Wi-Fi interface:** auto-detected as the first Wi-Fi device that NetworkManager manages. There is no new CLI flag.
 - **Tests:**
@@ -297,7 +297,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - The success rule: `full`; `portal`; `limited` + gateway ok (success + `limited_internet`); `limited` + gateway down (`no_internet`); `none` and `unknown` + gateway ok.
 - **Fixtures:** at first, hand-written from the NetworkManager 1.46 messages and labelled as such. Step 6.3 replaces them with outputs recorded on the laptops, anonymised so no real neighbour SSIDs end up in the repo.
 - **Verify:** `pytest tests/test_nmcli_parsing.py -v`. No hardware in this step.
-- **Depends on:** Q10 (timeout budget), Q11 (security mapping), Q17 (autoconnect priority).
+- **Decided:** Q10 (45 s activation + 15 s verification; the configurator waits 70 s), Q11 (no `open`; transition mode → `wpa2-psk`; unjoinable networks left out of the scan), Q17 (`autoconnect-priority 10`).
 - **Implements:** SPEC §5.5 (credentials to NM, no secrets in argv), §6.3 (`internet`, warnings), §7, §8. DESIGN §6 (one runner, timeouts, raw output), §7 (`wifi/nmcli`).
 
 ### Step 2.5: 🔧 HARDWARE (one laptop, read-only): real scan smoke test
@@ -309,6 +309,14 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   python -c "import asyncio; from teton_device.wifi.nmcli import NmcliBackend; [print(n) for n in asyncio.run(NmcliBackend().scan())]"
   ```
   Expected: a list of nearby networks with signal and security type, the strongest first, and no duplicates. This command doesn't change any connection.
+- **Also compare the real output with the hand-written fixtures (read-only):**
+  ```bash
+  nmcli -t -f SSID,SIGNAL,SECURITY device wifi list | head -5          # vs tests/fixtures/nmcli/scan.txt
+  nmcli -t -f DEVICE,TYPE,STATE device                                  # vs devices.txt
+  nmcli -t -f GENERAL.IP4-CONNECTIVITY,IP4.ADDRESS,IP4.GATEWAY device show <wifi-iface>   # vs device-show-full.txt
+  nmcli -t -f NAME,UUID connection show | head -3                       # vs connections.txt
+  ```
+  Don't paste neighbours' SSIDs into the repo: only the format matters.
 - **Also confirm the stdin approach of review Q9 (this one creates and deletes a throwaway profile, so you run it):**
   ```bash
   nmcli connection add type wifi con-name teton-stdin-test ssid teton-stdin-test wifi-sec.key-mgmt wpa-psk autoconnect no
@@ -679,6 +687,9 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q5 | Rate-limited reply | `error` `rate_limited` with `retry_after_s`, plaintext on `session`; a current session continues (2026-10-14, SPEC §5.4, §6.3) |
 | Q6 | `bad_request` vs ending the session | Fails before decryption → end the session; a decrypted but invalid command → `bad_request`, the session stays; not in `caps` → `unsupported_security`. One message at a time, so nothing is seen in `CONNECTING` (2026-10-14, SPEC §6.3, DESIGN §6) |
 | Q22 | `hello` after the window expired | Accepted only while the window is open; a pending handshake is dropped if the window closes before `confirm`. No reply when refused (2026-10-14, SPEC §5.4) |
+| Q10 | Timeout budget | 45 s activation (`--wait 45`) + 15 s verification; the configurator waits 70 s (2026-10-14, SPEC §7, §8.3; `protocol.py`) |
+| Q11 | Security types | `open` out of scope (`unsupported_security`); `WPA2 WPA3` → `wpa2-psk`, `WPA3` → `wpa3-sae`, `WPA2 802.1X` → `wpa2-eap-peap`; unjoinable networks left out of the scan list (2026-10-14, SPEC §6.2, §6.3, §8.1) |
+| Q17 | Autoconnect priority | `connection.autoconnect-priority 10`; autoconnect off until success (2026-10-14, SPEC §8.2) |
 | Q24 | Deleting the Teton profiles on reset | `WifiBackend.forget_all()` deletes every `teton-*` profile, so it works after a restart (2026-10-14, raised in Step 2.3; DESIGN §5, SPEC §9.1) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
@@ -691,16 +702,7 @@ These are the questions still open after the first review and the spike. Each on
 
 ### Gaps (the docs don't say)
 
-**Q10. The 45 s timeout budget (blocks 2.4).** SPEC §7 says `timeout` = "no result within 45 s", and §8.3 says `connection up` has a 45 s timeout. Verification (the connectivity check + 2 pings) comes after that. Is 45 s the activation limit or the total? *Proposal:* 45 s for activation, plus up to 15 s for verification. The configurator waits up to 70 s before saying "took too long".
-
-**Q11. Which security types (blocks 1.1, 1.3, 2.4).**
-- SPEC §6.2 accepts `open`, but `info.caps` (§6.1) and plan_v4 only mention PSK, SAE and PEAP. Is `open` in scope?
-- Most phone hotspots now use **WPA2/WPA3 transition mode** (`SECURITY = "WPA2 WPA3"`). *Proposal:* map it to `wpa2-psk`, which works with transition mode.
-- Networks we can't join (WEP, OWE, WPA3-Enterprise): hide them from the scan list, or show them as "not supported"? *Proposal:* show them, marked "not supported", so the technician isn't left wondering why the network is missing.
-
 **Q16. CI earlier? (minor).** CI is SHOULD (Step 7.1) but takes about 15 minutes, and it would guard every PR from Phase 1 on. *Proposal:* move it to right after Step 0.2 (the spike). Otherwise it stays in Phase 7.
-
-**Q17. Autoconnect priority (affects the Step 6.3 demo, minor).** Laptop A has several saved networks with autoconnect on. SPEC §8.5 sets the Teton profile to autoconnect but says nothing about priority, so a known home network could win after a reboot. *Proposal:* give the `teton-*` profile `connection.autoconnect-priority 10` (a one-line SPEC addition). In production that matters less, because a fresh device has no other profiles.
 
 ### Raised by the device buttons (D2, 2026-10-13)
 

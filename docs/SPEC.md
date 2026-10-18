@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -133,7 +133,7 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 | Message | Fields |
 |---|---|
 | `{"type":"scan"}` | none |
-| `{"type":"set_credentials", …}` | `ssid` (str, 1–32 bytes), `hidden` (bool), `security` (`open` \| `wpa2-psk` \| `wpa3-sae` \| `wpa2-eap-peap`), `psk` (str, 8–63, for PSK/SAE), `eap` (object, for PEAP): `identity`, `password`, optional `anonymous_identity`, `ca_cert_pem`, `domain_suffix_match` |
+| `{"type":"set_credentials", …}` | `ssid` (str, 1–32 bytes), `hidden` (bool), `security` (`wpa2-psk` \| `wpa3-sae` \| `wpa2-eap-peap`; `open` is valid on the wire but out of scope and gets `unsupported_security`, review Q11), `psk` (str, 8–63, for PSK/SAE), `eap` (object, for PEAP): `identity`, `password`, optional `anonymous_identity`, `ca_cert_pem`, `domain_suffix_match` |
 
 There is no reset command over BLE. Reset is the physical [R] button only (decision Q7, plan_v5 D2).
 
@@ -142,7 +142,7 @@ There is no reset command over BLE. Reset is the physical [R] button only (decis
 | Message | Fields |
 |---|---|
 | `{"type":"ready"}` | Session established |
-| `{"type":"scan_result","networks":[…]}` | Each entry: `ssid`, `signal` (0–100), `security`. Deduplicated by SSID, sorted by signal, max 30 |
+| `{"type":"scan_result","networks":[…]}` | Each entry: `ssid`, `signal` (0–100), `security`. Deduplicated by SSID (the strongest kept), sorted by signal, max 30. Hidden SSIDs and networks the device can't join (open, WEP, OWE, WPA1, WPA3-Enterprise) are left out (review Q11) |
 | `{"type":"status","state":"connecting"}` | Sent as soon as credentials are accepted |
 | `{"type":"status","state":"connected", …}` | `ip`, `internet` (`full` \| `limited` \| `none` \| `unknown`, as reported by NetworkManager for the Wi-Fi interface), `warnings` (list: `server_not_verified`, `limited_internet`) |
 | `{"type":"status","state":"failed","reason":…}` | `reason` from §7; the session stays open for a retry |
@@ -160,17 +160,17 @@ There is no reset command over BLE. Reset is the physical [R] button only (decis
 | `no_ip` | activated, but no IPv4 address within the timeout | "Connected to Wi-Fi but the network gave no address. Contact IT." |
 | `captive_portal` | NM connectivity of the Wi-Fi interface = `portal` | "This network needs a login page; devices can't use it. Contact IT." |
 | `no_internet` | NM connectivity is not `full` and the gateway does not answer a ping on the Wi-Fi interface | "Connected, but there is no internet access. Contact IT." |
-| `timeout` | no result within 45 s | "Connecting took too long. Try again." |
+| `timeout` | activation not done within 45 s, or verification not within 15 s (review Q10). The configurator gives up waiting after 70 s | "Connecting took too long. Try again." |
 
 Mapping `nmcli` output to reasons is a heuristic. Unknown errors map to `timeout`, and the raw message goes to the device log only.
 
 ## 8. Device Wi-Fi behaviour
 
-1. **Scan:** `nmcli -t -f SSID,SIGNAL,SECURITY device wifi list --rescan yes`.
-2. **Apply:** create a dedicated profile `teton-<ssid>` (`nmcli connection add …`) **without secrets**, with security set per §6.2. For PEAP: `802-1x.eap peap`, `802-1x.phase2-auth mschapv2`, plus `802-1x.ca-cert` and `802-1x.domain-suffix-match` when provided. If neither is provided, add the warning `server_not_verified` (decision Q3). Then set the secret (`wifi-sec.psk` or `802-1x.password`) by piping `set …`, `save`, `quit` into `nmcli connection edit id teton-<ssid>` through stdin (§5.5).
-3. **Activate:** `nmcli connection up teton-<ssid>` with a 45 s timeout.
-4. **Verify,** always on the Wi-Fi interface: device state `activated` → IPv4 address present (else `no_ip`) → `nmcli networking connectivity check` to refresh, then read the interface's own value with `nmcli -g GENERAL.IP4-CONNECTIVITY device show <iface>` → `portal` fails with `captive_portal` → if not `full`, ping the gateway with `ping -I <iface> -c 2 -W 2` (no answer fails with `no_internet`).
-5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, keep the profile, set it to autoconnect, mark the device provisioned, then close the pairing window, which stops advertising before the configurator disconnects. The device stays on in `PROVISIONED` (plan_v5, D2, replacing the exit of S4).
+1. **Scan:** `nmcli -t -f SSID,SIGNAL,SECURITY device wifi list --rescan yes`. `SECURITY` maps as: `WPA2 802.1X` → `wpa2-eap-peap`; any other value with `WPA2` (including `WPA2 WPA3` transition mode) → `wpa2-psk`; `WPA3` alone → `wpa3-sae`; everything else is left out (review Q11).
+2. **Apply:** first delete any profile already named `teton-<ssid>` (a leftover from a crash). Then create a dedicated profile `teton-<ssid>` (`nmcli connection add …`) **without secrets**, bound to the Wi-Fi interface, with `connection.autoconnect no` and `connection.autoconnect-priority 10` (review Q17), with security set per §6.2. For PEAP: `802-1x.eap peap`, `802-1x.phase2-auth mschapv2`, plus `802-1x.ca-cert` and `802-1x.domain-suffix-match` when provided. If neither is provided, add the warning `server_not_verified` (decision Q3). Then set the secret (`wifi-sec.psk` or `802-1x.password`) by piping `set …`, `save`, `quit` into `nmcli connection edit id teton-<ssid>` through stdin (§5.5).
+3. **Activate:** `nmcli --wait 45 connection up id teton-<ssid>`. Verification (step 4) then has its own 15 s limit (review Q10). Every command runs with `LC_ALL=C`, so the error texts the reasons are mapped from are always English.
+4. **Verify,** always on the Wi-Fi interface: device state `activated` → IPv4 address present (else `no_ip`) → `nmcli networking connectivity check` to refresh, then read the interface's own value with `nmcli -t -f GENERAL.IP4-CONNECTIVITY,IP4.ADDRESS,IP4.GATEWAY device show <iface>` → `portal` fails with `captive_portal` → if not `full`, ping the gateway with `ping -I <iface> -c 2 -W 2` (no answer fails with `no_internet`).
+5. **Success:** activated + IP + (`full`, or gateway reachable). If connectivity is not `full`, add the warning `limited_internet` ("joined the network but can't reach the internet; this may be normal on restricted networks"). Report `connected`, keep the profile, set it to autoconnect (`connection.autoconnect yes`), mark the device provisioned, then close the pairing window, which stops advertising before the configurator disconnects. The device stays on in `PROVISIONED` (plan_v5, D2, replacing the exit of S4).
 6. **Failure:** report the reason (§7), delete the new profile, and let NetworkManager return to the previous connection if any. The BLE session stays open for a retry.
 
 All `nmcli` calls go through one backend interface, so tests and simulation use a fake.

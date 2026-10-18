@@ -19,6 +19,7 @@ from teton_device.wifi.backend import (
     Credentials,
     Network,
     profile_name,
+    rejected_reason,
     scan_list,
     security_warnings,
 )
@@ -82,13 +83,6 @@ def _credentials_match(net: FakeNetwork, creds: Credentials) -> bool:
     return creds.psk == net.psk
 
 
-def _rejected(creds: Credentials) -> FailureReason:
-    # The reason NetworkManager would give: Enterprise rejects the login, Personal the key.
-    if creds.security == Security.WPA2_EAP_PEAP:
-        return FailureReason.AUTH_FAILED
-    return FailureReason.WRONG_PASSWORD
-
-
 class FakeWifiBackend:
     """Implements WifiBackend with simulated networks. Inspect `profiles` in tests."""
 
@@ -135,5 +129,5 @@ class FakeWifiBackend:
         if net.outcome is not None:
             return ConnectResult.failure(net.outcome)
         if not _credentials_match(net, creds):
-            return ConnectResult.failure(_rejected(creds))
+            return ConnectResult.failure(rejected_reason(creds))
         return ConnectResult.success(net.ip, InternetStatus.FULL, security_warnings(creds))
