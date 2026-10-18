@@ -421,13 +421,16 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the configurator's half of the protocol, independent of UI and radio.
 - **Files:** `src/teton_configurator/client.py`, `tests/test_client.py`.
 - **Content:**
-  - `ProvisioningClient(transport)` has:
-    - `read_info()`;
-    - `handshake(code) -> DeviceInfo`, which also checks that `hello_reply.device_id` matches `info.device_id`;
+  - `ClientChannel` (Q37): framing, one inbox for `session` and `status`, the cipher. `tests/fake_configurator.py` is rebuilt on it, and the device rig moves there from `test_service.py`.
+  - `ProvisioningClient(transport, reply_wait_s, scan_wait_s, result_wait_s)` has:
+    - `connect()`, `read_info()` and `close()`;
+    - `handshake(code) -> Info`, which also checks that `hello_reply.device_id` matches `info.device_id` (else `ProtocolError`, Q34), and may be called again after a wrong code (Q4);
     - `scan() -> list[Network]`;
-    - `provision(creds) -> AsyncIterator[Status]`.
-  - Typed errors: `WrongCodeError`, `RateLimitedError`, `ProtocolError` and `ConnectionLostError`.
-- **Tests (against the real `DeviceService` over the memory transport, with the fake Wi-Fi):** a full success; a wrong code raises `WrongCodeError` and no `set_credentials` is ever sent (checked on the wire); a retry after `failed`.
+    - `provision(creds) -> AsyncIterator[Status]`: `connecting`, then `connected` or `failed`.
+  - Waits: 10 s per handshake reply (Q31), 40 s for a scan, 10 s for `connecting`, 70 s for the result (Q32, Q10).
+  - Typed errors: `WrongCodeError`, `RateLimitedError`, `NoReplyError`, `DeviceRefusedError`, `ProtocolError` and `ConnectionLostError` (Q33, Q35, Q36).
+- **Tests (against the real `DeviceService` over the memory transport, with the fake Wi-Fi, `QueueButtons` and fake time):** a full success; a wrong code raises `WrongCodeError` and no `set_credentials` is ever sent (checked on the wire), then the right code works on the same connection; a retry after `failed`; the rate limit (`RateLimitedError` with the seconds); a `hello` after the window closed (`NoReplyError`, Q22); a `device_id` mismatch; no result in time; `unsupported_security`; a lost connection; no error text contains a secret.
+- **Decided:** Q31–Q37.
 - **Verify:** `pytest tests/test_client.py -v`
 - **Implements:** SPEC §5.1 (configurator side), §6. DESIGN §5 (`ProvisioningClient`).
 
@@ -710,6 +713,13 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q28 | Checking input before sending | Local checks of code format, password length, network name length, non-empty username/password; no exception text shown; a mistyped code sends no `hello` (2026-10-18, SPEC §9.2) |
 | Q29 | Scope of the text test | Also every `StatusWarning`; jargon list unchanged, matched on word boundaries (2026-10-18) |
 | Q30 | Network list markers | Bars `▂▄▆█` (≥75 / ≥50 / ≥25 / below) and "password" / "enterprise", no lock emoji (2026-10-18, SPEC §9.2) |
+| Q31 | Handshake reply wait (Q22) | 10 s per handshake reply, `CONFIGURATOR_REPLY_WAIT_S` (2026-10-18, SPEC §9.2) |
+| Q32 | Other configurator waits | Scan 40 s; `connecting` 10 s, then the result 70 s; all injectable (2026-10-18, SPEC §9.2) |
+| Q33 | Client errors | Plus `NoReplyError` and `DeviceRefusedError(code)` (2026-10-18, DESIGN §5) |
+| Q34 | `device_id` mismatch | `ProtocolError`, before the tag, nothing sent (2026-10-18) |
+| Q35 | What a client survives | Wrong code / rate limit: handshake again; `failed`: retry; no reply / lost / protocol error: finished (2026-10-18) |
+| Q36 | Lost connection | No disconnect event: `TransportError` → `ConnectionLostError`, a silent drop → `NoReplyError` (2026-10-18) |
+| Q37 | Test client vs real client | `ClientChannel` shared by `ProvisioningClient` and the tests' `Configurator`; the device rig moves to the helper (2026-10-18) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

@@ -17,7 +17,6 @@ from fake_configurator import (
     Configurator,
     FakeClock,
     instant,
-    receive,
     settle,
 )
 from structlog.testing import capture_logs
@@ -36,7 +35,6 @@ from teton_common.messages import (
     ScanResult,
     SetCredentials,
     Status,
-    decode_session,
     encode,
 )
 from teton_common.protocol import (
@@ -138,7 +136,7 @@ async def test_wrong_code_is_caught_by_the_configurator_first(rig: Rig) -> None:
 async def test_forged_confirm_gets_handshake_failed_and_ends_the_session(rig: Rig) -> None:
     await rig.configurator.hello()
     await rig.configurator.send_session(Confirm(confirm=bytes(32)))
-    assert decode_session(await receive(rig.configurator.session_inbox)) == HandshakeFailed()
+    assert await rig.configurator.session_reply() == HandshakeFailed()
     await settle()
     assert not rig.session.active
     assert rig.state.state == DeviceState.ADVERTISING
@@ -156,7 +154,7 @@ async def test_confirm_without_hello_ends_nothing_and_gets_no_reply(rig: Rig) ->
 
 
 async def test_garbage_on_session_is_ignored_and_the_device_keeps_working(rig: Rig) -> None:
-    await rig.configurator.framed.send_message(Channel.SESSION, b"{not json")
+    await rig.configurator.channel.send_bytes(Channel.SESSION, b"{not json")
     await rig.configurator.assert_silent()
     assert await rig.configurator.establish() == Ready()
 
@@ -308,7 +306,7 @@ async def assert_session_ended(rig: Rig) -> None:
 
 
 async def test_bad_envelope_ends_the_session(ready: Rig) -> None:
-    await ready.configurator.framed.send_message(Channel.COMMAND, b'{"seq": 0}')
+    await ready.configurator.channel.send_bytes(Channel.COMMAND, b'{"seq": 0}')
     await assert_session_ended(ready)
 
 
@@ -316,7 +314,7 @@ async def test_tampered_ciphertext_ends_the_session(ready: Rig) -> None:
     assert ready.configurator.cipher is not None
     good = ready.configurator.cipher.seal(encode(Scan()))
     tampered = Envelope(seq=good.seq, ct=bytes([good.ct[0] ^ 1]) + good.ct[1:])
-    await ready.configurator.framed.send_message(Channel.COMMAND, encode(tampered))
+    await ready.configurator.channel.send_bytes(Channel.COMMAND, encode(tampered))
     await assert_session_ended(ready)
 
 
@@ -329,7 +327,7 @@ async def test_wrong_seq_ends_the_session(ready: Rig) -> None:
 
 async def test_command_before_the_handshake_ends_the_session(rig: Rig) -> None:
     await rig.configurator.hello()  # handshake in progress, no keys yet
-    await rig.configurator.framed.send_message(
+    await rig.configurator.channel.send_bytes(
         Channel.COMMAND, encode(Envelope(seq=0, ct=bytes(32)))
     )
     await rig.configurator.assert_silent()

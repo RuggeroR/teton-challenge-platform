@@ -127,6 +127,11 @@ VERIFY_TIMEOUT_S: Final = 15  # IP, connectivity check and gateway ping, after a
 # How long the configurator waits for connected/failed after `connecting`: both limits above
 # plus 10 s for BLE and the profile setup (review Q10).
 CONFIGURATOR_RESULT_WAIT_S: Final = 70
+# The configurator's other waits (review Q31, Q32). No reply to a hello means the pairing
+# window is closed (Q22). A scan gets the device's 30 s nmcli limit plus the time to send
+# up to 30 networks in 20-byte chunks.
+CONFIGURATOR_REPLY_WAIT_S: Final = 10
+CONFIGURATOR_SCAN_WAIT_S: Final = 40
 HANDSHAKE_MAX_FAILURES: Final = 5  # consecutive failures before backing off (SPEC §5.4)
 HANDSHAKE_BACKOFF_INITIAL_S: Final = 30
 HANDSHAKE_BACKOFF_MAX_S: Final = 600

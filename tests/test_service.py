@@ -1,9 +1,8 @@
 # Tests for the device service: the whole device (state machine, storage, session, buttons,
 # pairing window, radio) over the memory transport with the fake Wi-Fi, injected buttons and
-# fake time. The configurator side is the minimal one from fake_configurator.py.
+# fake time. The rig and the low-level configurator are in fake_configurator.py.
 
 import asyncio
-import io
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -13,103 +12,24 @@ from fake_configurator import (
     CODE,
     DEVICE_ID,
     HOME,
+    NEW_CODE,
     WRONG_CODE,
-    Configurator,
-    FakeTime,
-    instant,
+    WRONG_PSK,
+    Device,
+    provisioned_device,
     settle,
 )
 from structlog.testing import capture_logs
 
 from teton_common.crypto import HandshakeError
-from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport
-from teton_common.messages import (
-    Error,
-    HelloReply,
-    Ready,
-    Scan,
-    ScanResult,
-    SetCredentials,
-    Status,
-    decode_info,
-)
-from teton_common.protocol import (
-    Channel,
-    DeviceState,
-    ErrorCode,
-    FailureReason,
-    Security,
-    StatusState,
-)
+from teton_common.memory_transport import MemoryDeviceTransport
+from teton_common.messages import Error, HelloReply, Ready, Scan, ScanResult, Status
+from teton_common.protocol import Channel, DeviceState, ErrorCode, FailureReason, StatusState
 from teton_common.transport import TransportError
-from teton_device.buttons import MSG_ALREADY_CONNECTED, MSG_BUSY, Button, QueueButtons, StatusLine
-from teton_device.service import DeviceService
-from teton_device.storage import Storage
+from teton_device.buttons import MSG_ALREADY_CONNECTED, MSG_BUSY, Button
 from teton_device.wifi.fake import FakeWifiBackend
 
 S = DeviceState
-NEW_CODE = "ZYXWVTSRQPNMKJHG"
-WRONG_PSK = SetCredentials(ssid="Home-PSK", security=Security.WPA2_PSK, psk="not-the-password")
-
-
-class Device:
-    """A running DeviceService plus everything it talks to."""
-
-    def __init__(
-        self,
-        tmp_path: Path,
-        wifi: FakeWifiBackend | None = None,
-        transport: MemoryDeviceTransport | None = None,
-    ) -> None:
-        self.time = FakeTime()
-        self.transport = transport or MemoryDeviceTransport()
-        self.configurator = Configurator(MemoryClientTransport(self.transport))
-        codes = iter([CODE, NEW_CODE])
-        self.storage = Storage(tmp_path, new_code=lambda: next(codes), new_id=lambda: DEVICE_ID)
-        self.wifi = wifi or FakeWifiBackend(sleep=instant)
-        self.buttons = QueueButtons()
-        self.screen = io.StringIO()  # not a terminal: plain lines
-        self.service = DeviceService(
-            self.transport,
-            self.wifi,
-            self.storage,
-            self.buttons,
-            clock=self.time,
-            sleep=self.time.sleep,
-            status_line=StatusLine(self.screen),
-        )
-        self.task: asyncio.Task[None] | None = None
-
-    async def start(self) -> None:
-        self.task = asyncio.create_task(self.service.run())
-        await settle()
-
-    async def press(self, *buttons: Button) -> None:
-        self.buttons.press(*buttons)
-        await settle()
-
-    async def connect(self) -> None:
-        await self.configurator.transport.connect()
-
-    @property
-    def state(self) -> DeviceState:
-        return self.service.state()
-
-    @property
-    def advertising(self) -> bool:
-        return self.transport._advertising  # what the radio is doing right now
-
-    def info_state(self) -> DeviceState:
-        return decode_info(self.transport._info).state
-
-    def running(self) -> bool:
-        return self.task is not None and not self.task.done()
-
-    async def stop(self) -> None:
-        if self.running():
-            self.buttons.press(Button.POWER)
-            assert self.task is not None
-            await asyncio.wait_for(self.task, 1)
 
 
 @pytest.fixture
@@ -118,15 +38,6 @@ async def device(tmp_path: Path) -> AsyncIterator[Device]:
     await d.start()
     yield d
     await d.stop()
-
-
-async def provisioned_device(tmp_path: Path) -> Device:
-    stored = Storage(tmp_path, new_code=lambda: CODE, new_id=lambda: DEVICE_ID)
-    stored.load_or_create()
-    stored.mark_provisioned()
-    d = Device(tmp_path)
-    await d.start()
-    return d
 
 
 async def pair_and_establish(d: Device) -> None:

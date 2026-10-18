@@ -1,31 +1,33 @@
-# Test helpers shared by test_session.py and test_service.py: a minimal configurator built
-# from teton_common.crypto, fake time, and a way to let the memory transport deliver.
+# Test helpers shared by test_session.py, test_service.py and test_client.py: a low-level
+# configurator for driving the device, a running device rig, and fake time.
 # Not a test module (no test_ prefix); pytest puts tests/ on sys.path, so tests import it
 # as `fake_configurator`.
+#
+# The Configurator is built on the real client's ClientChannel (framing, inbox, cipher), so
+# the protocol exists only once (review Q37). It adds what only tests need: raw replies
+# instead of typed errors, invalid plaintext, and checking that nothing arrives.
 
 import asyncio
+import io
+from pathlib import Path
 
 from teton_common.crypto import ConfiguratorHandshake, Role, SessionCipher
-from teton_common.memory_transport import MemoryClientTransport
-from teton_common.messages import (
-    HelloReply,
-    Message,
-    SessionMessage,
-    SetCredentials,
-    StatusMessage,
-    decode_envelope,
-    decode_session,
-    decode_status,
-    encode,
-)
-from teton_common.protocol import Channel, Security
-from teton_common.transport import FramedTransport, Receiver
-from teton_device.wifi.fake import HOME_PSK_PASSWORD
+from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport
+from teton_common.messages import HelloReply, Message, SetCredentials, decode_info, encode
+from teton_common.protocol import Channel, DeviceState, Security
+from teton_configurator.client import ClientChannel, DeviceMessage
+from teton_device.buttons import Button, QueueButtons, StatusLine
+from teton_device.service import DeviceService
+from teton_device.storage import Storage
+from teton_device.wifi.fake import HOME_PSK_PASSWORD, FakeWifiBackend
 
 DEVICE_ID = "TETON-3F9A2C"
 CODE = "7K2MQX9D4HTRB8WZ"
+NEW_CODE = "ZYXWVTSRQPNMKJHG"  # the code after the first [R][R]
 WRONG_CODE = "0123456789ABCDEF"
 HOME = SetCredentials(ssid="Home-PSK", security=Security.WPA2_PSK, psk=HOME_PSK_PASSWORD)
+WRONG_PSK = SetCredentials(ssid="Home-PSK", security=Security.WPA2_PSK, psk="not-the-password")
+RECEIVE_WAIT_S = 1  # real seconds; the memory transport delivers in a few loop turns
 
 
 class FakeClock:
@@ -49,63 +51,56 @@ async def settle() -> None:
         await asyncio.sleep(0)
 
 
-async def receive(queue: asyncio.Queue[bytes]) -> bytes:
-    return await asyncio.wait_for(queue.get(), timeout=1)
-
-
 class Configurator:
-    """Just enough of the configurator's half of the protocol to drive the device."""
+    """Just enough of the configurator's half of the protocol to drive the device, step by
+    step, with every reply returned as it came."""
 
     def __init__(self, transport: MemoryClientTransport) -> None:
         self.transport = transport
-        self.framed = FramedTransport(transport)
-        self.session_inbox: asyncio.Queue[bytes] = asyncio.Queue()
-        self.status_inbox: asyncio.Queue[bytes] = asyncio.Queue()
-        self.framed.on_message(Channel.SESSION, self._put(self.session_inbox))
-        self.framed.on_message(Channel.STATUS, self._put(self.status_inbox))
+        self.channel = ClientChannel(transport)
         self.handshake: ConfiguratorHandshake | None = None
-        self.cipher: SessionCipher | None = None
 
-    @staticmethod
-    def _put(queue: asyncio.Queue[bytes]) -> Receiver:
-        async def put(data: bytes) -> None:
-            queue.put_nowait(data)
-
-        return put
+    @property
+    def cipher(self) -> SessionCipher | None:
+        return self.channel.cipher
 
     async def send_session(self, msg: Message) -> None:
-        await self.framed.send_message(Channel.SESSION, encode(msg))
+        await self.channel.send_bytes(Channel.SESSION, encode(msg))
 
-    async def hello(self, code: str = CODE) -> SessionMessage:
+    async def hello(self, code: str = CODE) -> DeviceMessage:
         self.handshake = ConfiguratorHandshake(code)
         await self.send_session(self.handshake.hello())
-        return decode_session(await receive(self.session_inbox))
+        return await self.session_reply()
 
-    async def establish(self, code: str = CODE) -> StatusMessage:
+    async def establish(self, code: str = CODE) -> DeviceMessage:
         """hello, check the device's tag, confirm; returns the first status (ready)."""
         reply = await self.hello(code)
         assert isinstance(reply, HelloReply) and self.handshake is not None
         confirm, keys = self.handshake.on_hello_reply(reply)
-        self.cipher = SessionCipher(keys, Role.CONFIGURATOR)
+        self.channel.cipher = SessionCipher(keys, Role.CONFIGURATOR)
         await self.send_session(confirm)
         return await self.status()
 
     async def send_plaintext_command(self, plaintext: bytes) -> None:
-        assert self.cipher is not None
-        envelope = self.cipher.seal(plaintext)
-        await self.framed.send_message(Channel.COMMAND, encode(envelope))
+        await self.channel.send_sealed(plaintext)
 
     async def command(self, msg: Message) -> None:
         await self.send_plaintext_command(encode(msg))
 
-    async def status(self) -> StatusMessage:
-        assert self.cipher is not None
-        envelope = decode_envelope(await receive(self.status_inbox))
-        return decode_status(self.cipher.open(envelope))
+    async def session_reply(self) -> DeviceMessage:
+        return await self._receive(Channel.SESSION)
+
+    async def status(self) -> DeviceMessage:
+        return await self._receive(Channel.STATUS)
 
     async def assert_silent(self) -> None:
         await settle()
-        assert self.session_inbox.empty() and self.status_inbox.empty()
+        assert not self.channel.pending()
+
+    async def _receive(self, expected: Channel) -> DeviceMessage:
+        channel, msg = await self.channel.receive(RECEIVE_WAIT_S)
+        assert channel == expected, f"{msg.TYPE} arrived on {channel}, expected {expected}"
+        return msg
 
 
 class FakeTime:
@@ -134,3 +129,73 @@ class FakeTime:
                 if not future.done():
                     future.set_result(None)
             await settle()
+
+
+class Device:
+    """A running DeviceService plus everything it talks to: memory transport, fake Wi-Fi,
+    injected buttons, fake time. `configurator` is a low-level client on that transport."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        wifi: FakeWifiBackend | None = None,
+        transport: MemoryDeviceTransport | None = None,
+    ) -> None:
+        self.time = FakeTime()
+        self.transport = transport or MemoryDeviceTransport()
+        self.configurator = Configurator(MemoryClientTransport(self.transport))
+        codes = iter([CODE, NEW_CODE])
+        self.storage = Storage(tmp_path, new_code=lambda: next(codes), new_id=lambda: DEVICE_ID)
+        self.wifi = wifi or FakeWifiBackend(sleep=instant)
+        self.buttons = QueueButtons()
+        self.screen = io.StringIO()  # not a terminal: plain lines
+        self.service = DeviceService(
+            self.transport,
+            self.wifi,
+            self.storage,
+            self.buttons,
+            clock=self.time,
+            sleep=self.time.sleep,
+            status_line=StatusLine(self.screen),
+        )
+        self.task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        self.task = asyncio.create_task(self.service.run())
+        await settle()
+
+    async def press(self, *buttons: Button) -> None:
+        self.buttons.press(*buttons)
+        await settle()
+
+    async def connect(self) -> None:
+        await self.configurator.transport.connect()
+
+    @property
+    def state(self) -> DeviceState:
+        return self.service.state()
+
+    @property
+    def advertising(self) -> bool:
+        return self.transport._advertising  # what the radio is doing right now
+
+    def info_state(self) -> DeviceState:
+        return decode_info(self.transport._info).state
+
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    async def stop(self) -> None:
+        if self.running():
+            self.buttons.press(Button.POWER)
+            assert self.task is not None
+            await asyncio.wait_for(self.task, 1)
+
+
+async def provisioned_device(tmp_path: Path) -> Device:
+    stored = Storage(tmp_path, new_code=lambda: CODE, new_id=lambda: DEVICE_ID)
+    stored.load_or_create()
+    stored.mark_provisioned()
+    d = Device(tmp_path)
+    await d.start()
+    return d
