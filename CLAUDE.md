@@ -59,17 +59,15 @@ Rules:
 
 ## Status
 
-Phases 1 and 2 of `docs/IMPLEMENTATION_PLAN.md` are done, and most of Phase 0 (465 tests pass):
+Phases 1, 2 and 3 of `docs/IMPLEMENTATION_PLAN.md` are done, and most of Phase 0 (628 tests pass):
 
 - **Phase 0:** tooling and the BLE spike are done; the spike results are in the plan. Step 0.3, the laptop B install check on Python 3.14, has no results recorded yet.
 - **Phase 1:** `teton_common` is complete: protocol, setup code, messages, framing, crypto, log, transport and the memory transport.
-- **Phase 2:** the device core is complete:
-  - `state.py`, `storage.py`, `qr.py`;
-  - the Wi-Fi backend (`wifi/backend.py`, `fake.py`, `nmcli.py`, `connectivity.py`), with the real `nmcli` checks of Step 2.5 run on laptop 1;
-  - `session.py`, `buttons.py` and `service.py`.
+- **Phase 2:** the device core is complete: `state.py`, `storage.py`, `qr.py`, the Wi-Fi backend (`wifi/*`, real `nmcli` checks of Step 2.5 run on laptop 1), `session.py`, `buttons.py` and `service.py`.
+- **Phase 3:** the configurator core is complete: `ui_text.py`, `client.py` (`ClientChannel` + `ProvisioningClient`) and `flow.py` (`run_flow` with injected `discover`/`connect`/`io`).
 
-  Every Phase 2 review question is decided and recorded in `plan_v5.md`. Only Q16 (CI earlier) is open.
+Every review question up to Q47 is decided and recorded in `plan_v5.md`. Only Q16 (CI earlier) is open.
 
-**Next is Phase 3:** the configurator (`ui_text.py`, `client.py`, `flow.py`). These files are still comment-only skeletons, as are `gatt_server.py`, `sim_server.py`, `ble_client.py` and `sim_client.py`. Both `cli.py` files are placeholders that only print "not implemented yet" (Step 5.2).
+**Next is Phase 4:** the in-memory end-to-end test and the "no secrets in logs" test (`tests/test_end_to_end.py`, `tests/test_no_secrets_in_logs.py`, `tests/conftest.py`; still comment-only). `gatt_server.py`, `sim_server.py`, `ble_client.py` and `sim_client.py` are still comment-only skeletons, and both `cli.py` files are placeholders that only print "not implemented yet" (Step 5.2).
 
-`tests/fake_configurator.py` holds a minimal protocol client and `FakeTime`, shared by the session and service tests. The real configurator client (Step 3.2) should be tested against `DeviceService` in the same way.
+`tests/fake_configurator.py` holds the shared test helpers: a low-level `Configurator` built on the real `ClientChannel`, the `Device` rig (a running `DeviceService` with the memory transport, fake Wi-Fi, `QueueButtons` and `FakeTime`) and `FakeTime`.
