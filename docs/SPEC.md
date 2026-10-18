@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.5, 2026-10-18. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code); 1.5 applies the Phase 3 review decisions so far (Q26: `auth_failed` text; Q27, Q28: configurator-side failures and input checks; Q30: network list markers; Q31, Q32: configurator waits; Q38–Q47: the guided flow, CA file limit). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.6, 2026-10-18. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code); 1.5 applies the Phase 3 review decisions so far (Q26: `auth_failed` text; Q27, Q28: configurator-side failures and input checks; Q30: network list markers; Q31, Q32: configurator waits; Q38–Q47: the guided flow, CA file limit); 1.6 applies the Phase 5 review decisions (Q64–Q72: the simulation transport, §5.4, §10; Q73, Q74: logs on stderr, §9, §11; Q75, Q76: Ctrl+C and SIGTERM, §9; Q77: the sim state dir, §3; Q78: fake Wi-Fi delays, §10; Q65: what simulation is used for, §10, §12). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -36,7 +36,7 @@ Out of scope for code (covered in the writeup instead): manufacturer certificate
 | BLE local name | `Teton-` + last 4 characters of `device_id` |
 | Setup code | 16 characters of **Crockford base32** (`0-9 A-Z` without `I L O U`), i.e. 80 random bits from `secrets`, displayed as `XXXX-XXXX-XXXX-XXXX` |
 | Code input normalization | uppercase; remove spaces and `-`; map `O→0`, `I→1`, `L→1`; reject if not exactly 16 valid characters |
-| Storage | `state.json` in the state dir (default `~/.local/state/teton-device/`, dir `0700`, file `0600`) holding `device_id`, `setup_code` and the `provisioned` flag (so a provisioned device doesn't advertise again after a restart) |
+| Storage | `state.json` in the state dir (default `~/.local/state/teton-device/`, or `~/.local/state/teton-device-sim/` with `--simulate` so a simulation never touches a real device's state (review Q77); dir `0700`, file `0600`) holding `device_id`, `setup_code` and the `provisioned` flag (so a provisioned device doesn't advertise again after a restart) |
 | Display | On `run` and after every reset, the device prints the code and a terminal QR with payload `TETON:v1;id=<device_id>;code=<code>`, where `<code>` is the normalised 16 characters without dashes (review Q14), plus the line: *"For demo purposes the code is shown on screen; in production it is printed on the device label."* The code + QR are the stand-in for the printed label |
 | Rotation | The [R] reset button (§9.1) generates a new setup code |
 | Input | The device never accepts typed text: no passwords, codes or commands at runtime. Its only inputs are the simulated buttons of §9.1 (plan_v5, D2) |
@@ -105,7 +105,7 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 
 ### 5.4 Limits
 
-- One active session at a time, enforced by the radio: while a configurator is connected, the device does not advertise, so no other configurator can find or connect to it (plan_v5, S1). Simulation mode accepts one client at a time.
+- One active session at a time, enforced by the radio: while a configurator is connected, the device does not advertise, so no other configurator can find or connect to it (plan_v5, S1). Simulation mode does the same: while a configurator is connected it refuses other connections and can't be discovered (review Q64).
 - The device does not track BLE connections (plan_v5, S3). A new `hello` ends any previous session and starts a new one; retyping the setup code is simply a new `hello` on the same connection. A session also ends after 300 s without traffic, or on any protocol violation (§6.3).
 - A `hello` is accepted only while the pairing window is open; otherwise it gets no reply and a current session continues. A handshake whose window closes before `confirm` arrives is dropped (review Q22). After a disconnect, BlueZ restarts advertising by itself if the pairing window is still open (the advertisement is still registered). After the window has expired, the advertisement is unregistered and nothing comes back.
 - Failed handshakes: every accepted `hello` counts as a failure until its `confirm` succeeds (a wrong code never reaches `confirm`: the configurator aborts first). After 5 consecutive failures, refuse new `hello`s for 30 s, doubling with each further failure up to 600 s. The counter resets on success. No permanent lockout. A refused `hello` gets `{"type":"error","code":"rate_limited","retry_after_s":<int>}` on `session`, and a current session continues (review Q4, Q5).
@@ -183,9 +183,9 @@ The device has no keyboard input beyond a few simulated physical buttons and a s
 
 | Command | Behaviour |
 |---|---|
-| `teton-device run` | Load or create the state, print the code + QR + demo note, then wait for buttons. **An unprovisioned device does not advertise until [P] is pressed.** Serves sessions while the pairing window is open, logs to stdout. After a successful provisioning it stops advertising and stays on in `PROVISIONED` (green LED). Started on an already provisioned device, it stays on without advertising. Exits only on [Q] or Ctrl+C |
+| `teton-device run` | Load or create the state, print the code + QR + demo note, then wait for buttons. **An unprovisioned device does not advertise until [P] is pressed.** Serves sessions while the pairing window is open. The screen (code, QR, LED, messages) is on stdout and the logs on stderr (review Q73). After a successful provisioning it stops advertising and stays on in `PROVISIONED` (green LED). Started on an already provisioned device, it stays on without advertising. Exits only on [Q], Ctrl+C or SIGTERM (review Q76) |
 | `teton-device run --simulate` | Same, with the same buttons, but over a local Unix socket with the fake Wi-Fi backend (§10) |
-| `--state-dir PATH` | Override the state directory |
+| `--state-dir PATH` | Override the state directory (default §3) |
 | `--verbose` | `DEBUG` logging (§11) |
 
 There are no `reset` or `show-code` subcommands: reset is the [R] button, and the code + QR are printed on start and after every reset.
@@ -197,7 +197,7 @@ There are no `reset` or `show-code` subcommands: reset is the [R] button, and th
 | `P` | Pairing | Opens a 300 s pairing window and starts advertising. Pressing it again restarts the window at 300 s. When the window expires, advertising stops; a session in progress may finish. On a provisioned device it only shows "Already connected. Hold reset to set up again." |
 | `R` | Reset | Needs **two presses within 3 s** (a simulated long press); a single press shows "Press reset again to confirm." Then: delete the Teton NetworkManager profiles, i.e. every profile named `teton-*` (`WifiBackend.forget_all()`, review Q24), generate a new setup code, print the new code + QR, and return to `UNPROVISIONED` with advertising off until [P]. Works in every state except while connecting, where it shows "Busy connecting. Try again in a moment."; a pairing window or session in progress is closed (review Q21) |
 | `S` | Status | Prints the state, SSID, IP, internet result and the remaining pairing time, then the setup code + QR again, because log lines scroll them away (review Q23) |
-| `Q` or Ctrl+C | Power | Clean shutdown: stop advertising, close the transport, restore the terminal, exit 0 |
+| `Q` or Ctrl+C | Power | Clean shutdown: stop advertising, close the transport, restore the terminal, exit 0. SIGTERM does the same (review Q76) |
 
 Keys are case-insensitive; other keys are ignored, and so are escape sequences such as arrows or F1 (`ESC O P`), even though they contain button letters. Without a terminal (systemd, redirected stdin) there are no buttons: the device logs a warning and stays on without advertising (review Q23).
 
@@ -227,7 +227,7 @@ Every text the technician sees lives in `teton_configurator/ui_text.py` and is o
 
 How long the configurator waits (review Q31, Q32): 10 s for each handshake reply (no reply means the pairing window is closed: "Press the pairing button on the device and try again."), 40 s for a scan result, 10 s for `connecting` after `set_credentials`, then 70 s for the result (Q10).
 
-`--simulate` connects to the simulated device instead of BLE.
+`--simulate` connects to the simulated device instead of BLE. `--verbose` shows `DEBUG` logs (on stderr). Ctrl+C stops at any point: the connection is closed, the terminal settings are restored and the exit code is 130 (review Q46, Q75).
 
 ### 9.3 Phone page (COULD)
 
@@ -235,14 +235,17 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 
 ## 10. Simulation mode (SHOULD)
 
-- Transport: a Unix domain socket at `$XDG_RUNTIME_DIR/teton-sim.sock`. It carries the same four logical channels (`info`, `session`, `command`, `status`) with the same framing, 20-byte chunks and crypto, so only the radio is simulated. Like BLE, it serves one client at a time, and it accepts new clients only while the pairing window is open (the simulated "advertising").
+- Transport: a Unix domain socket at `$XDG_RUNTIME_DIR/teton-sim.sock`, or `<tempdir>/teton-sim-<uid>.sock` when that variable is unset, with mode `0600` (review Q69). It carries the same four logical channels (`info`, `session`, `command`, `status`) with the same framing, 20-byte chunks and crypto, so only the radio is simulated.
+- Wire format (review Q66, Q67): the socket is a byte stream, so each chunk travels as one record `[u8 channel][u16 big-endian length][chunk]` (channels: 0 `info`, 1 `session`, 2 `command`, 3 `status`). This sits **under** the normal framing (§4.1). `info` is a request (an empty record from the configurator) and a response (the info JSON, at most 180 bytes). An unknown channel, a length over the limit (20 bytes, 180 for `info`), a wrong direction, a non-empty info request or a short read drops the connection, with one log line that never contains the bytes.
+- One configurator at a time, like BLE (review Q64): new connections are accepted only while the pairing window is open (the simulated "advertising") and no configurator is connected; any other connection is closed at once. `connect()` reads `info` once, so a refused connection fails there, and discovery lists the device only while it accepts connections. A configurator leaving waits for the device to drop the connection, so the next one is never refused by mistake (review Q70).
+- Start and stop (review Q68): a leftover socket file nobody listens on is removed at start; if another simulated device is listening, start fails ("another simulated device is already running"); a path that isn't a socket is never touched. The file is removed on power off.
 - Buttons and LED: the same as on BLE (§9.1).
-- Wi-Fi: a fake backend with a fixed network list (`Home-PSK` with password `correct-horse-battery`, `Hospital-EAP` with user `nurse01` and password `teton-demo`, `Cafe-Portal` → `captive_portal`, `Weak-Signal` → `timeout`).
-- Lets evaluators run the full flow in two terminals on any machine, and is used by the end-to-end test.
+- Wi-Fi: a fake backend with a fixed network list (`Home-PSK` with password `correct-horse-battery`, `Hospital-EAP` with user `nurse01` and password `teton-demo`, `Cafe-Portal` → `captive_portal`, `Weak-Signal` → `timeout`). A scan takes 2 s and an attempt 3 s, so the yellow LED and the progress line are visible (review Q78); `Weak-Signal` waits the full 45 s.
+- Lets evaluators run the full flow in two terminals on any machine. The in-process end-to-end tests use the memory transport instead; a two-process smoke test runs the simulation (review Q65, Q80).
 
 ## 11. Logging
 
-`structlog` JSON lines to stdout with `ts`, `level`, `event`, `device_id`, `session_id` (random per session) and `state`, all passed through the redaction processor (§5.5). Default level `INFO`; use `--verbose` for `DEBUG`.
+`structlog` JSON lines to **stderr** with `ts`, `level`, `event`, `device_id`, `session_id` (random per session) and `state`, all passed through the redaction processor (§5.5). The device's default level is `INFO` and the configurator's `WARNING`, so log lines don't break up the technician's guided text; `--verbose` gives `DEBUG` on both (review Q73, Q74). stdout is the device's screen and the configurator's guided text.
 
 ## 12. Acceptance criteria
 
@@ -256,7 +259,7 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 7. README, ARCHITECTURE.md (writeup) and evidence (logs and screenshots) are in the repo.
 
 **SHOULD**
-8. `--simulate` runs the full flow on one machine, and an end-to-end test runs it in CI (GitHub Actions: ruff + pytest on Python 3.12 and 3.14).
+8. `--simulate` runs the full flow on one machine, and a two-process smoke test runs it in CI (GitHub Actions: ruff + pytest on Python 3.12 and 3.14).
 9. WPA2-Enterprise PEAP is verified against `hostapd` on laptop B, with the config files in `scripts/hostapd-enterprise/`.
 10. A `deploy/` systemd unit and polkit rule, plus `scripts/preflight.sh` that checks the adapter, BlueZ, NetworkManager and Python versions.
 

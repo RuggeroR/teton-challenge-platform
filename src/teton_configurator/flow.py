@@ -7,7 +7,9 @@
 # Exit code: 0 when the device is connected, 1 otherwise.
 
 import asyncio
+import contextlib
 import getpass
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,16 +69,45 @@ class FlowIO(Protocol):
 
 class TerminalIO:
     """input() and getpass() run in a thread, so the event loop (and with it the BLE
-    connection) keeps running while the technician types."""
+    connection) keeps running while the technician types.
+
+    A daemon thread, not asyncio.to_thread (review Q75): after Ctrl+C an executor thread
+    still blocked in input() would keep the process alive until Enter is pressed."""
 
     async def ask(self, prompt: str) -> str:
-        return await asyncio.to_thread(input, prompt)
+        return await _in_daemon_thread(input, prompt)
 
     async def ask_secret(self, prompt: str) -> str:
-        return await asyncio.to_thread(getpass.getpass, prompt)
+        return await _in_daemon_thread(getpass.getpass, prompt)
 
     def show(self, text: str) -> None:
         print(text, flush=True)
+
+
+async def _in_daemon_thread(read: Callable[[str], str], prompt: str) -> str:
+    loop = asyncio.get_running_loop()
+    answer: asyncio.Future[str] = loop.create_future()
+
+    def deliver(result: str, error: BaseException | None) -> None:
+        if answer.done():  # cancelled by Ctrl+C meanwhile
+            return
+        if error is not None:
+            answer.set_exception(error)  # EOFError: end of input, like typing q (Q46)
+        else:
+            answer.set_result(result)
+
+    def work() -> None:  # runs in the thread
+        result = ""
+        error: BaseException | None = None
+        try:
+            result = read(prompt)
+        except BaseException as exc:
+            error = exc
+        with contextlib.suppress(RuntimeError):  # the loop is already gone
+            loop.call_soon_threadsafe(deliver, result, error)
+
+    threading.Thread(target=work, daemon=True).start()
+    return await answer
 
 
 class _Quit(Exception):

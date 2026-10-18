@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.5, 2026-10-18. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5); 1.5 applies the Phase 3 review decisions so far (Q25–Q30: configurator texts, §6; Q31–Q37: the protocol client, §5; Q38–Q47: the guided flow, §5). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.6, 2026-10-18. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5); 1.5 applies the Phase 3 review decisions so far (Q25–Q30: configurator texts, §6; Q31–Q37: the protocol client, §5; Q38–Q47: the guided flow, §5); 1.6 applies the Phase 5 review decisions (Q64–Q72: the simulation transport, §2, §5, §7; Q73: logs on stderr through the status line, §4.1; Q74–Q80: the CLIs, §5, §7). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -51,6 +51,7 @@ src/teton_common/             shared by both sides, no I/O
   setup_code.py               generate, format, normalise, validate setup codes
   transport.py                DeviceTransport / ClientTransport interfaces (4 logical channels)
   memory_transport.py         in-memory paired transport for tests
+  sim_wire.py                 simulation wire format: [u8 channel][u16 length][chunk] records, socket path
   log.py                      structlog config + secret redaction processor
 src/teton_device/
   __main__.py, cli.py         `teton-device run [--simulate] [--state-dir] [--verbose]`
@@ -68,7 +69,7 @@ src/teton_device/
   wifi/fake.py                simulated networks for --simulate and tests
   wifi/connectivity.py        the success rule: what the checks found -> ConnectResult (pure)
 src/teton_configurator/
-  __main__.py, cli.py         `teton-configurator [--simulate]`
+  __main__.py, cli.py         `teton-configurator [--simulate] [--verbose]`
   flow.py                     guided steps and prompts
   client.py                   protocol client (handshake, scan, set_credentials, await result)
   ble_client.py               BLE transport (bleak): discovery + GATT
@@ -135,7 +136,7 @@ Configurator                                        Device
 
 - **Key reader.** `TerminalButtons` puts the terminal in single-key mode (`tty.setcbreak`, standard library) rather than raw mode, so Ctrl+C still works. Each keypress arrives at once without Enter, and stdin is read through `loop.add_reader`. Keys typed before the reader starts are discarded (`setcbreak` flushes typed-ahead input), so a key pressed before the device listens counts for nothing. The original `termios` settings are restored on exit, also after a crash. The reader yields `Button` values (`PAIR`, `RESET`, `STATUS`, `POWER`) and ignores every other key; it never collects text. Escape sequences (arrows, F1 = `ESC O P`, Alt+key) are skipped as a whole by the pure `buttons_in()`, so they can't press a button. Without a terminal it logs a warning and yields nothing; the controller keeps ticking, so the device stays on (review Q23).
 - **Pure helpers, injected clock.** `PairingWindow(clock, duration_s=300)` (`open()`, `remaining()`, `is_open()`) and `ResetDetector(clock, within_s=3)` (`press() -> bool`, true on the second press within 3 s) hold no I/O, so tests drive them with a fake clock.
-- **Status line.** `StatusLine` derives the LED from the state, the window and the last result, by priority: yellow (connecting) > green (provisioned) > red (last attempt failed, with the reason; cleared by the next attempt or a reset) > blinking blue (window open, with countdown) > off. On a terminal it redraws one line at the bottom, and log lines are printed above it (clear the line, write the log, redraw). When stdout isn't a terminal (for example piped to `tee` for evidence), it prints LED changes as ordinary lines instead, without escape codes or countdown ticks.
+- **Status line.** `StatusLine` derives the LED from the state, the window and the last result, by priority: yellow (connecting) > green (provisioned) > red (last attempt failed, with the reason; cleared by the next attempt or a reset) > blinking blue (window open, with countdown) > off. On a terminal it redraws one line at the bottom, and log lines are printed above it (clear the line, write the log, redraw). The screen is stdout and the logs go to stderr (review Q73): the CLI hands `configure_logging` a writer that clears the LED line on stdout, writes the log line to stderr and redraws, so `2> file` keeps the logs apart from the screen, which shows the setup code. When stdout isn't a terminal (for example piped to `tee` for evidence), it prints LED changes as ordinary lines instead, without escape codes or countdown ticks.
 - **Controller.** `ButtonController` turns buttons into actions: [P] opens or restarts the window (or shows "Already connected. Hold reset to set up again." when provisioned), [R] arms the reset and a second [R] within 3 s runs it, [S] prints the device's status text (which ends with the code + QR, review Q23) and the window's remaining time, [Q] powers off. A 1 s tick closes an expired window, calls `DeviceActions.on_tick()` (the session idle check) and redraws the LED. The controller reads the key source through `contextlib.aclosing`, so the terminal is restored as soon as it stops, also after an exception. It calls the service through a small `DeviceActions` protocol (§5), so its tests inject buttons through `QueueButtons` (an in-memory `ButtonSource`) and a fake `DeviceActions`, with no service, transport or terminal.
 
 ## 5. Key interfaces (contracts for implementation)
@@ -160,6 +161,12 @@ class ClientTransport(Protocol):                 # teton_common/transport.py (co
 # No connect/disconnect events and no MTU: see plan_v5 S2, S3.
 # set_advertising(False) does not drop an active connection (spike: the connection survives
 # unregistering the advertisement). The socket transport stops accepting new clients instead.
+# transport.check_chunk() holds the BLE rules every transport enforces: who sends on which
+# channel, chunks of at most 20 bytes (review Q71).
+# Simulation (sim_server.py / sim_client.py, wire format in teton_common/sim_wire.py): like the
+# radio, the server closes at once any connection that arrives while the window is closed or a
+# client is connected (Q64); connect() makes one info round trip, so a refusal fails there.
+# The client's close() waits for the server's EOF, so the slot is free when it returns (Q70).
 
 class ButtonSource(Protocol):                    # teton_device/buttons.py
     def __aiter__(self) -> AsyncGenerator[Button, None]: ...     # PAIR | RESET | STATUS | POWER
@@ -237,8 +244,17 @@ class FlowIO(Protocol):                          # teton_configurator/flow.py
 
 async def run_flow(discover, connect, io, make_client=ProvisioningClient) -> int: ...
 # discover() -> list[FoundDevice]; connect(found) -> ClientTransport, not yet connected.
-# 0 when connected, 1 otherwise. ask/ask_secret run input() in a thread, so the event loop
-# (and the BLE connection) keeps running while the technician types.
+# 0 when connected, 1 otherwise. ask/ask_secret run input() in a daemon thread, so the event
+# loop (and the BLE connection) keeps running while the technician types, and Ctrl+C at a
+# prompt exits at once (review Q75).
+
+# cli.py on both sides only wires (review Q79): parse_args(argv), then run_device(args,
+# buttons=None) / run_configurator(args, io=None); main() runs it and maps exit codes.
+# --simulate: sim transport + FakeWifiBackend, state dir ~/.local/state/teton-device-sim (Q77).
+# Otherwise BLE, imported lazily. Device: Ctrl+C and SIGTERM -> clean stop, exit 0 (Q76).
+# Configurator: Ctrl+C -> terminal restored, transport closed, exit 130 (Q75).
+# Then os._exit(130): the thread still blocked in input() holds the C stdin lock, and a
+# normal interpreter exit would wait for it for ever.
 ```
 
 `crypto.py` exposes a pure, synchronous API: `Handshake` objects for each role that produce and consume handshake messages, and an `Envelope` (`seal(plaintext) -> bytes`, `open(bytes) -> plaintext`) that tracks sequence numbers.
@@ -266,6 +282,8 @@ async def run_flow(discover, connect, io, make_client=ProvisioningClient) -> int
 | `wifi/nmcli` | parse recorded `nmcli` outputs (fixtures) into networks and failure reasons; with a fake runner, no secret ever appears in argv; per-interface success rule (full / limited + gateway / portal / gateway down) | none |
 | `log` | the redaction processor per key and depth; error codes such as `bad_request` stay visible. `test_no_secrets_in_logs`: one simulated run (wrong code, wrong password, PEAP with a CA, success) plus `NmcliBackend` through the real runner, all rendered by the real `configure_logging(verbose=True)`; no password, setup code, key, ciphertext or CA line in the logs, stdout, stderr or the configurator's output, while SSIDs, `identity` and failure reasons stay visible (plan_v5, Q56–Q62) | none |
 | end to end | the real device service and the real guided flow (`run_flow`, scripted answers) over `memory_transport`, with `wifi/fake`, injected buttons ([P] first) and fake time; each case checks the technician's text and the device's state and LED: PSK ok, limited internet, PEAP with and without a CA, a hidden network, wrong password then retry, wrong code then retype (no command before the good code), portal, a second `hello` restarting the session, the rate limit, the window expiring before `hello` then [P] again, and after success nothing found until [R][R] + [P]. Shared fixtures in `tests/conftest.py`, helpers in `tests/fake_configurator.py` (plan_v5, Q48–Q55) | none |
+| transports | `test_transport_contract.py`: the same contract checks (info reads, ordered delivery, advertising and one-client rules, channel directions, 20-byte chunks, close) run against the memory pair and the socket pair (review Q71). `test_sim_transport.py`: the wire format, malformed records, stale and live socket files, one configurator at a time, discovery, and a handshake + scan through the real `ProvisioningClient` and `DeviceService` over the socket | none |
+| CLIs | argument parsing, `reset`/`show-code` rejected, `--state-dir`, `run --simulate` with injected buttons, no `bless`/`bleak` import in sim mode (fresh subprocess), a two-process smoke test: the device as a subprocess on a pseudo-terminal, the real `run_flow` with scripted answers over the socket; SIGTERM on the device process; Ctrl+C on the configurator process at the password prompt (review Q75, Q76, Q79, Q80) | none |
 | manual | real BLE + real Wi-Fi on the two laptops; `btmon` capture; Enterprise via hostapd | yes |
 
 CI (SHOULD): GitHub Actions on `ubuntu-24.04` runs `ruff check`, `ruff format --check` and `pytest` on **Python 3.12 and 3.14** (plan_v5, D1). 3.12 is the device's version and catches any use of newer features; 3.14 is laptop 2's configurator. The radio libraries are imported lazily, so CI needs no Bluetooth.

@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -70,6 +71,27 @@ def test_debug_only_when_verbose(log_stream: io.StringIO) -> None:
     configure_logging(verbose=True, stream=log_stream)
     log.debug("shown")
     assert [line["event"] for line in lines(log_stream)] == ["shown"]
+
+
+def test_default_level_is_a_floor_verbose_lowers(log_stream: io.StringIO) -> None:
+    """The configurator logs warnings only, unless --verbose (review Q74)."""
+    log = structlog.get_logger()
+    configure_logging(stream=log_stream, default_level=logging.WARNING)
+    log.info("hidden")
+    log.warning("shown")
+    configure_logging(verbose=True, stream=log_stream, default_level=logging.WARNING)
+    log.debug("also_shown")
+    assert [line["event"] for line in lines(log_stream)] == ["shown", "also_shown"]
+
+
+def test_logs_go_to_stderr_by_default(
+    log_stream: io.StringIO, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """stdout is the screen (review Q73)."""
+    configure_logging()
+    structlog.get_logger().info("on_stderr")
+    out = capsys.readouterr()
+    assert "on_stderr" in out.err and out.out == ""
 
 
 def test_message_objects_are_logged_without_secrets(log_stream: io.StringIO) -> None:

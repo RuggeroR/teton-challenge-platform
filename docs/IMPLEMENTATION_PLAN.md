@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 7, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63). If this plan disagrees with those documents, they win.
+Version 8, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -230,7 +230,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - A small `FramedTransport` helper that combines a transport, `framing.frame` and one `Reassembler` per channel, so framing sits above the transport.
   - `memory_transport.pair()` returns a device end and a client end. The client can only connect while the device end is advertising, and turning advertising off keeps an existing connection.
 - **Tests:** `read_info()` returns what `set_info()` set; messages arrive on the right channel in order; large messages go through framing in 20-byte chunks; after `close()`, sending raises an error on both ends; `connect()` fails while advertising is off; `set_advertising(False)` doesn't drop a connected client.
-- **Verify:** `pytest tests/test_memory_transport.py -v`
+- **Verify:** `pytest tests/test_memory_transport.py -v` (renamed `tests/test_transport_contract.py` in Step 5.1, Q71)
 - **Implements:** DESIGN §1 (principles), §5 (`DeviceTransport`, `ClientTransport`).
 
 ---
@@ -477,16 +477,19 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 ### Step 5.1: Unix-socket transports
 
 - **Goal:** the same protocol between two processes, with only the radio simulated.
-- **Files:** `src/teton_device/sim_server.py`, `src/teton_configurator/sim_client.py`, `tests/test_sim_transport.py`.
+- **Files:** `src/teton_common/sim_wire.py` (Q66), `src/teton_device/sim_server.py`, `src/teton_configurator/sim_client.py`, `src/teton_common/transport.py` (`check_chunk`, Q71), `tests/test_sim_transport.py`, `tests/test_transport_contract.py` (renamed from `test_memory_transport.py`, Q71).
 - **Content:**
   - The socket is a byte stream, so each chunk is wrapped as `[u8 channel][u16 length][chunk]`. This is a small multiplexing layer under our normal framing.
-  - `info` is a request/response pair.
-  - The socket lives at `$XDG_RUNTIME_DIR/teton-sim.sock`, falling back to a temp directory when the variable is unset (CI).
-  - A stale socket file is removed at start.
+  - `info` is a request (an empty record) and a response (at most `MAX_INFO_BYTES`) (Q67).
+  - Malformed records (unknown channel, too long, short read, wrong direction, non-empty info request) drop the connection with one log line that names the channel byte and length, never the bytes (Q67).
+  - The socket lives at `$XDG_RUNTIME_DIR/teton-sim.sock`, falling back to `<tempdir>/teton-sim-<uid>.sock` when the variable is unset (CI), mode `0600` (Q69).
+  - A leftover socket nobody listens on is removed at start; a live one fails the start; a path that isn't a socket is left alone (Q68). The file is removed on `close()`.
   - Chunks are 20 bytes, exactly as on BLE (S2).
-  - `set_advertising(False)` stops accepting new clients but keeps the connected one, like BLE (D2).
-- **Tests:** the server and client in one event loop on a socket in `tmp_path`; a full handshake + scan; the server serves one client at a time (a second client waits until the first leaves, like BLE); a client can't connect while advertising is off.
-- **Verify:** `pytest tests/test_sim_transport.py -v`
+  - One configurator at a time, like BLE: a connection that arrives while the window is closed or a client is connected is closed at once; `connect()` makes one `info` round trip, so it raises `TransportError` there (Q64). `set_advertising(False)` stops accepting new clients but keeps the connected one, like BLE (D2).
+  - The client's `close()` waits for the server's EOF, so the next connection is never refused by mistake; a device `send()` to a vanished client is dropped (Q70).
+  - `discover()` returns `FoundDevice(name=info.name, signal=100, address=<socket path>)` while the device accepts connections, else nothing (Q72).
+- **Tests:** the server and client in one event loop on a socket in `tmp_path`; a full handshake + scan through the real `ProvisioningClient` and `DeviceService`; one configurator at a time (the second is refused and can't discover the device until the first leaves); no connect while advertising is off; malformed records on both sides; a stale, a live and a non-socket file at the path; the socket mode; a device that powers off mid-session gives `ConnectionLostError`. The contract checks of the memory transport run against the sim pair too (Q71).
+- **Verify:** `pytest tests/test_sim_transport.py tests/test_transport_contract.py -v`
 - **Implements:** SPEC §10 (transport).
 
 ### Step 5.2: CLIs
@@ -496,9 +499,13 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Content:**
   - `teton-device run [--simulate] [--state-dir PATH] [--verbose]`. There are no other subcommands: reset is the [R] button of Step 2.7, and the code + QR are printed on start and after every reset (D2).
   - `teton-configurator [--simulate] [--verbose]`.
-  - `run` without `--simulate` imports BLE lazily. Until Phase 6 it prints a clear "BLE transport not available yet".
-  - `run` uses `TerminalButtons` in both modes. [Q] and Ctrl+C exit cleanly and restore the terminal.
-- **Tests:** argument parsing; `reset` and `show-code` are rejected as unknown commands; `--state-dir` is respected; `run --simulate` with `QueueButtons` ([P], then [Q]) starts and stops cleanly.
+  - `run` without `--simulate` imports BLE lazily. Until Phase 6 it prints a clear "BLE transport not available yet" and exits 1.
+  - `run` uses `TerminalButtons` in both modes. [Q], Ctrl+C and SIGTERM exit cleanly (0) and restore the terminal (Q76).
+  - `--simulate`: the sim transport, `FakeWifiBackend` (scan 2 s, connect 3 s, Q78) and the state dir `~/.local/state/teton-device-sim` unless `--state-dir` is given (Q77).
+  - The screen is stdout; logs go to stderr, through the status line on a terminal (Q73). The configurator logs at `WARNING` unless `--verbose` (Q74).
+  - The configurator supplies `TerminalIO` (daemon threads for `input`/`getpass`); Ctrl+C restores the terminal, closes the transport and exits 130 (Q75).
+  - Only wiring: `parse_args`, `run_device(args, buttons=None)`, `run_configurator(args, io=None)`, `main()` (Q79).
+- **Tests:** argument parsing; `reset` and `show-code` are rejected as unknown commands; `--state-dir` is respected; `run --simulate` with `QueueButtons` ([P], then [Q]) starts and stops cleanly; no `bless`/`bleak` import in sim mode (a fresh subprocess); a two-process smoke test: the device subprocess on a pseudo-terminal, the configurator's `run_flow` with scripted answers over the socket (Q80); SIGTERM stops the device process cleanly (Q76); Ctrl+C at the configurator's password prompt exits 130 with echo restored and the device freed (Q75). `test_buttons.py` and `test_log.py` cover the log stream of `StatusLine` and `default_level`.
 - **Verify (two terminals, any machine):**
   ```bash
   # terminal 1
@@ -550,7 +557,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Files:** `docs/evidence/` (logs, screenshots, `.btsnoop` capture, `README.md` index), and `tests/fixtures/nmcli/` (real recorded outputs, anonymised).
 - **You do:**
   1. Phone: turn on the hotspot (WPA2-Personal; also try WPA3 if the phone offers it). Pick a password you don't use anywhere else, because it will appear in evidence notes.
-  2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop` in one terminal, and `teton-device run --verbose 2>&1 | tee docs/evidence/device-run.log` in another, then press [P].
+  2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop` in one terminal, and `teton-device run --verbose 2> docs/evidence/device-run.log` in another (logs only: the screen, with the setup code, stays out of the file, review Q73; follow it with `tail -f` in a third terminal), then press [P].
   3. Laptop B: `teton-configurator 2>&1 | tee docs/evidence/configurator-run.log`.
   4. Run the scenarios:
      - **wrong setup code:** a clear message, and nothing else is sent;
@@ -747,6 +754,23 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q61 | The nmcli path | `FakeRunner` in `tests/fake_nmcli.py`; the log test also runs the real `run()` with an echoing `sh` stand-in (2026-10-18) |
 | Q62 | Not hiding too much | SSIDs, `identity`, `device_id`, the failure reason and DEBUG lines asserted visible; `code` via the session test and `test_log` (2026-10-18) |
 | Q63 | Real evidence | Step 6.3 also greps the run logs for the hotspot password and the setup code before committing (2026-10-18) |
+| Q64 | A second configurator in simulation | Refused like the radio: closed at once while the window is closed or a client is connected; `connect()` makes an `info` round trip, so it fails there; `discover()` finds nothing (2026-10-18, SPEC §5.4, §10) |
+| Q65 | What simulation is used for | Not the in-process end-to-end tests (memory transport); a two-process smoke test (2026-10-18, SPEC §10, §12) |
+| Q66 | Where the sim wire format lives | `teton_common/sim_wire.py`, no protocol, framing or crypto (2026-10-18, DESIGN §2) |
+| Q67 | `info` record and limits | Empty request, response ≤ 180 bytes; 20 bytes for the other channels; malformed → one log line without the bytes, connection dropped; client waits 2 s (2026-10-18, SPEC §10) |
+| Q68 | Stale socket | Removed only if nobody listens; a live one fails the start; a non-socket is left alone (2026-10-18, SPEC §10) |
+| Q69 | Socket permissions, fallback path | `0600`; `<tempdir>/teton-sim-<uid>.sock` (2026-10-18, SPEC §10) |
+| Q70 | Disconnect ordering | Client `close()` waits for the server's EOF; device `send()` to a vanished client is dropped (2026-10-18, SPEC §10, DESIGN §5) |
+| Q71 | Contract tests | `test_transport_contract.py` over memory and sim; `transport.check_chunk()` shared (2026-10-18, DESIGN §7) |
+| Q72 | Sim discovery | `FoundDevice(info.name, 100, socket path)` (2026-10-18) |
+| Q73 | Logs vs. the screen | Screen on stdout, logs on stderr through the status line; Step 6.3 uses `2>` for the device log (2026-10-18, SPEC §9.1, §11, DESIGN §4.1) |
+| Q74 | Configurator log level | `WARNING` by default, `--verbose` → `DEBUG`; `configure_logging(default_level=…)` (2026-10-18, SPEC §11) |
+| Q75 | Ctrl+C on the configurator | Daemon threads for prompts; terminal restored; exit 130 (2026-10-18, SPEC §9.2, DESIGN §5) |
+| Q76 | Device signals | SIGTERM like Ctrl+C; newline after the LED line (2026-10-18, SPEC §9.1) |
+| Q77 | Sim state dir | `~/.local/state/teton-device-sim`; `--state-dir` overrides (2026-10-18, SPEC §3) |
+| Q78 | Fake Wi-Fi delays | Scan 2 s, connect 3 s; tests inject instant sleep (2026-10-18, SPEC §10) |
+| Q79 | CLI test seam | `parse_args`, `run_device(args, buttons=None)`, `run_configurator(args, io=None)`; startup errors → one line, exit 1 (2026-10-18, DESIGN §5) |
+| Q80 | Two-process smoke test | Device subprocess on a pseudo-terminal, scripted `run_flow` over the socket, no sleeps; import check in a fresh subprocess (2026-10-18, DESIGN §7) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

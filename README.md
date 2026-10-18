@@ -1,7 +1,50 @@
 # teton-challenge-platform
 Secure headless Wi-Fi provisioning for Ubuntu devices over BLE, with encrypted credential exchange, built in Python.
 
-> Setup, demo steps and troubleshooting will be added as the implementation lands. Check the requirements below first.
+> The Bluetooth demo steps and troubleshooting will be added as the implementation lands. The simulation below runs on any Linux machine today.
+
+## Try it without hardware (simulation)
+
+The simulation runs the real device and configurator code over a local socket instead of Bluetooth, with simulated Wi-Fi networks. It needs only Python 3.12+ and changes nothing on your machine's Bluetooth or Wi-Fi.
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+```
+
+**Terminal 1, the device:**
+
+```bash
+. .venv/bin/activate
+teton-device run --simulate
+```
+
+It prints its setup code and a QR code (the stand-in for the label on a real device), then a status line at the bottom: its "LED", now `LED off`. Press **P**: the LED blinks blue with a 5:00 countdown. Only now can a configurator find the device.
+
+**Terminal 2, the configurator:**
+
+```bash
+. .venv/bin/activate
+teton-configurator --simulate
+```
+
+Press Enter to pick the device, type the setup code shown in terminal 1, pick `Home-PSK` and type the password `correct-horse-battery`. You see `Connected. IP 192.168.1.23, internet OK.`, and terminal 1's LED turns green.
+
+The simulated networks:
+
+| Network | Login | What happens |
+|---|---|---|
+| `Home-PSK` | password `correct-horse-battery` | connects; any other password is rejected |
+| `Hospital-EAP` | username `nurse01`, password `teton-demo` (leave the certificate and domain empty) | connects, with a warning that the device couldn't check it is the real network |
+| `Cafe-Portal` | any password | fails: the network needs a login page |
+| `Weak-Signal` | any password | fails after 45 s: connecting took too long |
+
+Things to try:
+- A wrong password first: you get a plain-language failure and can try again on the same connection.
+- In terminal 1, while the device is running: **S** shows its state, IP and setup code; **P** on a connected device says it is already connected; **R** twice within 3 seconds resets it (new setup code, LED off); **Q** or Ctrl+C turns it off.
+- Restart the device after connecting it: it stays green and doesn't advertise. The simulation keeps its state in `~/.local/state/teton-device-sim` (change it with `--state-dir PATH`), apart from a real device's.
+- A second configurator can't find or connect to the device while the first is connected, as with Bluetooth.
+
+The device's logs are JSON lines on stderr (the screen is stdout). To keep them apart: `teton-device run --simulate 2> device.log`. Add `--verbose` to either command for debug logs. Without `--simulate`, both commands say "BLE transport not available yet" until the Bluetooth transports are built.
 
 ## Requirements
 
