@@ -409,6 +409,43 @@ def test_messages_and_log_lines_go_above_the_status_line() -> None:
     assert out.getvalue().endswith("LED green")  # redrawn underneath
 
 
+def test_log_lines_can_go_to_their_own_stream() -> None:
+    """The CLI: screen on stdout, logs on stderr (review Q73). The LED line is cleared
+    before the log line and redrawn after it."""
+    screen, logs = FakeTerminal(), io.StringIO()
+    line = StatusLine(screen, log_stream=logs)
+    line.show(Led.GREEN)
+    screen.seek(0)
+    screen.truncate()
+    line.write('{"event": "connected"}\n')
+    line.message("hello")
+    assert logs.getvalue() == '{"event": "connected"}\n'
+    assert screen.getvalue().startswith("\r\x1b[2K\x1b[32m●\x1b[0m LED green")  # cleared, redrawn
+    assert "connected" not in screen.getvalue()
+    assert "hello\n" in screen.getvalue()  # messages stay on the screen
+
+
+def test_log_lines_on_a_pipe_have_no_escape_codes() -> None:
+    screen, logs = io.StringIO(), io.StringIO()
+    line = StatusLine(screen, log_stream=logs)
+    line.show(Led.OFF)
+    line.write('{"event": "x"}\n')
+    assert screen.getvalue() == "LED off\n"
+    assert logs.getvalue() == '{"event": "x"}\n'
+
+
+def test_end_leaves_the_led_line_on_a_terminal() -> None:
+    """At power off the shell prompt goes below the LED line, not over it (review Q76)."""
+    screen = FakeTerminal()
+    line = StatusLine(screen)
+    line.show(Led.GREEN)
+    line.end()
+    assert screen.getvalue().endswith("LED green\n")
+    pipe = io.StringIO()
+    StatusLine(pipe).end()
+    assert pipe.getvalue() == ""
+
+
 # --- the terminal key reader ------------------------------------------------------------
 
 

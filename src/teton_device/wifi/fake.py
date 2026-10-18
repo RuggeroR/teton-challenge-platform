@@ -90,8 +90,8 @@ class FakeWifiBackend:
         self,
         networks: Iterable[FakeNetwork] = DEFAULT_NETWORKS,
         sleep: Sleep = asyncio.sleep,
-        scan_delay_s: float = 1.0,
-        connect_delay_s: float = 2.0,
+        scan_delay_s: float = 2.0,  # long enough to see the yellow LED in a demo (Q78)
+        connect_delay_s: float = 3.0,
     ) -> None:
         networks = tuple(networks)  # iterated twice below
         self._networks = {n.ssid: n for n in networks}

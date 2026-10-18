@@ -38,8 +38,11 @@ def redact_secrets(
     return _redact(event_dict)
 
 
-def configure_logging(verbose: bool = False, stream: TextIO | None = None) -> None:
-    """JSON lines to `stream` (stdout by default). INFO, or DEBUG when verbose."""
+def configure_logging(
+    verbose: bool = False, stream: TextIO | None = None, default_level: int = logging.INFO
+) -> None:
+    """JSON lines to `stream` (stderr by default; stdout is the screen, review Q73), at
+    `default_level`, or DEBUG when verbose. The configurator passes WARNING (review Q74)."""
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,  # device_id, session_id, state
@@ -50,8 +53,8 @@ def configure_logging(verbose: bool = False, stream: TextIO | None = None) -> No
             structlog.processors.JSONRenderer(),  # objects it can't serialise use repr()
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
-            logging.DEBUG if verbose else logging.INFO
+            logging.DEBUG if verbose else default_level
         ),
-        logger_factory=structlog.PrintLoggerFactory(stream or sys.stdout),
+        logger_factory=structlog.PrintLoggerFactory(stream or sys.stderr),
         cache_logger_on_first_use=False,
     )

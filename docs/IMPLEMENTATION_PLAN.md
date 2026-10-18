@@ -505,7 +505,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - The screen is stdout; logs go to stderr, through the status line on a terminal (Q73). The configurator logs at `WARNING` unless `--verbose` (Q74).
   - The configurator supplies `TerminalIO` (daemon threads for `input`/`getpass`); Ctrl+C restores the terminal, closes the transport and exits 130 (Q75).
   - Only wiring: `parse_args`, `run_device(args, buttons=None)`, `run_configurator(args, io=None)`, `main()` (Q79).
-- **Tests:** argument parsing; `reset` and `show-code` are rejected as unknown commands; `--state-dir` is respected; `run --simulate` with `QueueButtons` ([P], then [Q]) starts and stops cleanly; no `bless`/`bleak` import in sim mode (a fresh subprocess); a two-process smoke test: the device subprocess on a pseudo-terminal, the configurator's `run_flow` with scripted answers over the socket (Q80).
+- **Tests:** argument parsing; `reset` and `show-code` are rejected as unknown commands; `--state-dir` is respected; `run --simulate` with `QueueButtons` ([P], then [Q]) starts and stops cleanly; no `bless`/`bleak` import in sim mode (a fresh subprocess); a two-process smoke test: the device subprocess on a pseudo-terminal, the configurator's `run_flow` with scripted answers over the socket (Q80); SIGTERM stops the device process cleanly (Q76); Ctrl+C at the configurator's password prompt exits 130 with echo restored and the device freed (Q75). `test_buttons.py` and `test_log.py` cover the log stream of `StatusLine` and `default_level`.
 - **Verify (two terminals, any machine):**
   ```bash
   # terminal 1

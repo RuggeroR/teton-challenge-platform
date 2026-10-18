@@ -235,10 +235,15 @@ class StatusLine:
     On a terminal it is redrawn in place and every other line (messages, and log lines if
     logging writes here) is printed above it. On a pipe or file (e.g. `| tee` for
     evidence) there are no escape codes: only LED changes, as ordinary lines.
+
+    Log lines written here go to `log_stream` (the CLI passes stderr, review Q73): the LED
+    line is cleared, the log line written, and the LED redrawn, so `2> file` keeps the logs
+    apart from the screen, which shows the setup code.
     """
 
-    def __init__(self, stream: TextIO | None = None) -> None:
+    def __init__(self, stream: TextIO | None = None, log_stream: TextIO | None = None) -> None:
         self._stream = stream or sys.stdout
+        self._log = log_stream or self._stream
         self._tty = self._stream.isatty()
         self._line = ""  # what is drawn now (terminal)
         self._last_change: tuple[Led, str] | None = None  # what was printed last (pipe)
@@ -268,16 +273,23 @@ class StatusLine:
         for line in text.splitlines() or [""]:
             self._print(line)
 
+    def end(self) -> None:
+        """At power off: move below the LED line, so the shell prompt doesn't overwrite it."""
+        if self._tty and self._line:
+            self._stream.write("\n")
+            self._stream.flush()
+            self._line = ""
+
     # A file-like interface, so logging can write here and stay above the status line.
     def write(self, text: str) -> int:
         self._pending += text
         while "\n" in self._pending:
             line, self._pending = self._pending.split("\n", 1)
-            self._print(line)
+            self._print_log(line)
         return len(text)
 
     def flush(self) -> None:
-        self._stream.flush()
+        self._log.flush()
 
     def _print(self, line: str) -> None:
         if self._tty:
@@ -285,6 +297,19 @@ class StatusLine:
         else:
             self._stream.write(line + "\n")
         self._stream.flush()
+
+    def _print_log(self, line: str) -> None:
+        if self._log is self._stream:
+            self._print(line)
+            return
+        if self._tty:
+            self._stream.write(_CLEAR_LINE)  # the LED line, out of the way
+            self._stream.flush()
+        self._log.write(line + "\n")
+        self._log.flush()
+        if self._tty:
+            self._stream.write(self._line)  # and back
+            self._stream.flush()
 
 
 # ---------------------------------------------------------------------------
