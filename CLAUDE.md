@@ -59,7 +59,7 @@ Rules:
 
 ## Status
 
-Phases 1 to 5 of `docs/IMPLEMENTATION_PLAN.md` are done, and most of Phase 0 (714 tests pass):
+Phases 1 to 5 of `docs/IMPLEMENTATION_PLAN.md` are done, plus Step 6.1 and most of Phase 0 (744 tests pass):
 
 - **Phase 0:** tooling and the BLE spike are done; the spike results are in the plan. Step 0.3, the laptop B install check on Python 3.14, has no results recorded yet.
 - **Phase 1:** `teton_common` is complete: protocol, setup code, messages, framing, crypto, log, transport and the memory transport.
@@ -68,8 +68,8 @@ Phases 1 to 5 of `docs/IMPLEMENTATION_PLAN.md` are done, and most of Phase 0 (71
 - **Phase 4:** `tests/test_end_to_end.py` (the real `DeviceService` + the real `run_flow` in memory) and `tests/test_no_secrets_in_logs.py` (one run through the real `configure_logging`, keys caught by spies in `crypto`, `NmcliBackend` through the real runner). Shared fixtures are in `tests/conftest.py`.
 - **Phase 5:** the simulation transports (`teton_common/sim_wire.py`, `sim_server.py`, `sim_client.py`; the contract tests in `test_transport_contract.py` run on both pairs) and the two CLIs (`teton-device run [--simulate]`, `teton-configurator [--simulate]`). The README has the two-terminal sim quickstart.
 
-Every review question up to Q80 is decided and recorded in `plan_v5.md`. Only Q16 (CI earlier) is open.
+Every review question up to Q90 is decided and recorded in `plan_v5.md`. Only Q16 (CI earlier) is open.
 
-**Next is Phase 6:** real BLE and Wi-Fi. `gatt_server.py` and `ble_client.py` are still comment-only skeletons; without `--simulate` both CLIs print "BLE transport not available yet" and exit 1.
+**Phase 6 in progress:** Step 6.1 is done: `gatt_server.py` (`GattServerTransport` over `_BlessGattServer`, the only code touching `bless`), and `teton-device run` without `--simulate` uses it with `NmcliBackend`. Next is Step 6.2, `ble_client.py` (still a comment-only skeleton); until then the configurator without `--simulate` prints "BLE transport not available yet" and exits 1.
 
 `tests/conftest.py` holds only fixtures (`device`, `paired_device`, `ends` and `make_ends` over both transports, `state_dir`, `log_stream`). `tests/fake_configurator.py` holds the shared test helpers: a low-level `Configurator` built on the real `ClientChannel`, the `Device` rig (a running `DeviceService` with the memory transport, fake Wi-Fi, `QueueButtons` and `FakeTime`, plus `led()`), `FakeTime`, `Wire`, `ScriptedIO` and the recording Wi-Fi backends. `tests/fake_nmcli.py` holds the fake nmcli runner.

@@ -1,8 +1,25 @@
 # Teton Challenge: plan v5
 
-v5, 2026-10-11, amended 2026-10-13, 2026-10-14 and 2026-10-18. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phases 2, 3, 4 and 5; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
+v5, 2026-10-11, amended 2026-10-13, 2026-10-14, 2026-10-18 and 2026-10-19. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phases 2, 3, 4, 5 and 6; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
 
 ## Changelog
+
+### v5 additions: Phase 6 review questions (2026-10-19)
+
+Decided before building the BLE device transport (`IMPLEMENTATION_PLAN.md` Step 6.1, Q81–Q90), after reading the `bless` 0.3.0 source. Numbering continues after Q80.
+
+| Area | Before | v5 (decision) | Decided by |
+|---|---|---|---|
+| The BLE local name (review Q81) | `Teton-` + last 4 characters of `device_id` (SPEC §3), but the device ID is loaded inside `DeviceService.run()`, after the transport is built | **The CLI loads `Storage` once and passes `GattServerTransport(name)`.** `protocol.local_name(device_id)` builds the name; `Info.name` uses it too. A corrupt `state.json` still prints one line and exits 1 | Ruggero (proposed by Claude) |
+| Registering without advertising (review Q82) | "`start` registers the service without advertising" | **`start()` does what `BlessServer.start()` does minus the advertising** (`setup_task`, `bus.export`, `app.register`), using `bless`'s own objects, no patch. `set_advertising` calls `app.start_advertising` / `stop_advertising` and does nothing when already in that state (a second `start_advertising` would register a second advertisement) | Ruggero (proposed by Claude) |
+| Incoming writes (review Q83) | not specified | **`bless`'s synchronous write handler only queues `(channel, chunk)`; one task awaits the receivers in arrival order**, as the sim server does. A failing receiver is logged (`receiver_failed`), never with the bytes | Ruggero (proposed by Claude) |
+| Startup failures (review Q84) | not specified | **`bless` is imported and the server created in `start()`**, so building the transport imports nothing. No adapter, no `bluetoothd` or a refused system bus become a `TransportError` with one plain line; the CLI prints it and exits 1 | Ruggero (proposed by Claude) |
+| `close()` (review Q85) | "`close` must handle advertising being off" (spike: `bless.stop()` expects an advertisement) | **Step by step: stop advertising only if on, unregister the application, unexport it, disconnect the bus.** Each failing step is logged and the next still runs; `close()` never raises and a second call does nothing | Ruggero (proposed by Claude) |
+| The `info` limit (review Q86) | only `Info` checks 180 bytes | **`transport.check_info(data)`, used by `set_info` in the memory, sim and BLE device transports**, like `check_chunk` | Ruggero (proposed by Claude) |
+| Tests without a radio (review Q87) | "the pure helpers (characteristic table, `info` size limit)" | **Also a fake `bless`-shaped server injected with `GattServerTransport(name, make_server=…)`**: no advertising after `start`, advertising toggles and repeats, `close` with advertising off, writes delivered in order, `send` sets the value, startup errors become `TransportError`. The hardware Verify catches drift from the real `bless`. *Refined while building:* `bless`'s flag types can't be used without importing `bless`, so the fake stands in for `_BlessGattServer`, a thin wrapper that is the only code touching `bless`; the transport's logic is tested as listed, the wrapper on hardware | Ruggero (proposed by Claude) |
+| Device CLI wiring (review Q88) | Step 6.1 listed only `gatt_server.py`; `NmcliBackend()` ignored `--state-dir` (where CA certificates go) | **Step 6.1 also wires `teton-device run`: `GattServerTransport(name)` and `NmcliBackend(state_dir=…)`.** The device's "BLE transport not available yet" branch goes; the configurator keeps its own until Step 6.2 | Ruggero (proposed by Claude) |
+| Notification pacing (review Q89) | not specified | **No pacing:** each `send` sets the value, which is one notification. If the hardware runs (Steps 6.2, 6.3) lose chunks of a long scan list, pacing becomes its own decision | Ruggero (proposed by Claude) |
+| `bless` side effects (review Q90) | spike: `bless` sets the adapter alias while it runs | **Accepted and documented** in the README troubleshooting: the laptop's Bluetooth name is `Teton-XXXX` while advertising and stays so after a `kill -9` (`bluetoothctl reset-alias` restores it); if BlueZ drops the advertisement, `bless` prints a harmless `…: Released!` line on stdout | Ruggero (proposed by Claude) |
 
 ### v5 additions: Phase 5 review questions (2026-10-18)
 

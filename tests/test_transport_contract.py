@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import pytest
 
-from teton_common.protocol import Channel
+from teton_common.protocol import MAX_INFO_BYTES, Channel
 from teton_common.transport import ClientTransport, DeviceTransport, TransportError
 
 Ends = tuple[DeviceTransport, ClientTransport]
@@ -40,6 +40,14 @@ async def test_read_info_returns_what_the_device_set(ends: Ends) -> None:
     assert await client.read_info() == b'{"v":1}'
     device.set_info(b'{"v":1,"state":"connecting"}')
     assert await client.read_info() == b'{"v":1,"state":"connecting"}'
+
+
+def test_info_is_at_most_180_bytes(make_ends: Callable[[], Ends]) -> None:
+    """One GATT read (plan_v5 S2), checked by every device transport (review Q86)."""
+    device, _ = make_ends()
+    device.set_info(b"x" * MAX_INFO_BYTES)
+    with pytest.raises(TransportError, match="180"):
+        device.set_info(b"x" * (MAX_INFO_BYTES + 1))
 
 
 async def test_chunks_arrive_on_the_right_channel_in_order(ends: Ends) -> None:

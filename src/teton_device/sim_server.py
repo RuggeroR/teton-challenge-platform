@@ -26,6 +26,7 @@ from teton_common.transport import (
     Receiver,
     TransportError,
     check_chunk,
+    check_info,
 )
 
 log = structlog.get_logger()
@@ -63,6 +64,7 @@ class SimServerTransport:
         self._advertising = on  # a connected client stays connected
 
     def set_info(self, data: bytes) -> None:
+        check_info(data)
         self._info = bytes(data)
 
     def on_receive(self, channel: Channel, cb: Receiver) -> None:

@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 8, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80). If this plan disagrees with those documents, they win.
+Version 9, 2026-10-19. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80); version 9 records the Step 6.1 answers (plan_v5, "Phase 6 review questions", Q81–Q90). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -526,16 +526,24 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 ### Step 6.1: BLE device transport (`gatt_server.py`)
 
 - **Goal:** the device transport over BLE, implementing the same interface as the memory and socket transports.
-- **Files:** `src/teton_device/gatt_server.py`, `tests/test_gatt_server.py`.
+- **Files:** `src/teton_device/gatt_server.py`, `tests/test_gatt_server.py`; `src/teton_common/protocol.py` and `messages.py` (`local_name`, Q81); `src/teton_common/transport.py`, `memory_transport.py`, `src/teton_device/sim_server.py` (`check_info`, Q86); `src/teton_device/cli.py`, `tests/test_cli.py` (wiring, Q88); README troubleshooting (Q90).
 - **Content:**
-  - A `bless` server with the 4 characteristics from SPEC §4, no encryption flags (no pairing), the local name `Teton-XXXX` and the service UUID in the advertisement.
-  - Implements `DeviceTransport` with `bless` used as is (S2): `start` registers the service without advertising, `set_advertising` registers or unregisters the advertisement (as the spike did with `server.app.start_advertising` / `stop_advertising`), `set_info` sets the `info` value (under 180 bytes), `send` notifies, `close` stops the server. The spike noted that `bless`'s `stop()` expects an active advertisement, so `close` must handle advertising being off.
+  - A `bless` server with the 4 characteristics from SPEC §4, no encryption flags (no pairing), the local name `Teton-XXXX` and the service UUID in the advertisement. The name comes from the CLI: `GattServerTransport(name)`, built with `protocol.local_name(device_id)` after loading `Storage` (Q81).
+  - Implements `DeviceTransport` with `bless` used as is (S2), no patch:
+    - `start` does what `BlessServer.start()` does minus the advertising (`setup_task`, `bus.export`, `app.register`), and is where `bless` is imported and the server created; no adapter, no `bluetoothd` or a refused bus become a one-line `TransportError` (Q82, Q84).
+    - `set_advertising` registers or unregisters the advertisement (`app.start_advertising` / `stop_advertising`, as the spike did) and does nothing when already in that state (Q82).
+    - `set_info` keeps the `info` value, at most 180 bytes (`transport.check_info`, shared with the memory and sim transports, Q86); reads return it.
+    - Writes: `bless`'s synchronous handler queues `(channel, chunk)`; one task awaits the receivers in arrival order (Q83).
+    - `send` checks the chunk and sets the characteristic value, which BlueZ notifies to a subscribed client; no pacing (Q89).
+    - `close` goes step by step: stop advertising only if on, unregister, unexport, disconnect the bus; each failure is logged, it never raises, and a second call does nothing (Q85).
   - `bless` is imported lazily.
-- **Tests (no radio):** importing `teton_device` and running the sim and memory paths doesn't import `bless`; the pure helpers (characteristic table, `info` size limit) are tested.
+  - `teton-device run` without `--simulate` uses `GattServerTransport(name)` and `NmcliBackend(state_dir=…)`; the device's "not available yet" branch goes (Q88).
+- **Tests (no radio):** importing `teton_device` and running the sim and memory paths doesn't import `bless`; the pure helpers (characteristic table, `info` size limit, `local_name`); with a fake server injected through `make_server`, standing in for `_BlessGattServer`, the thin wrapper that is the only code touching `bless` (Q87): `start` doesn't advertise, advertising toggles and repeats, `close` with advertising off and twice, writes reach the receivers in order, `send` sets the value, a refused direction or a 21-byte chunk is rejected, startup errors become `TransportError`; the CLI builds the BLE transport with the device's name and the Wi-Fi backend with the state directory, without importing `bless`.
 - **Verify (🔧 laptop A + phone):** `teton-device run`, then in nRF Connect:
   - nothing is advertised until you press [P];
   - after [P] the service is visible, `info` reads as JSON, and the other characteristics are present;
   - connect, then wait for the 5-minute window to expire: the connection keeps working; disconnect: advertising does **not** come back (check with `btmon` for `LE Set Extended Advertising Enable`).
+- **Decided:** Q81–Q90.
 - **Implements:** SPEC §4. DESIGN §2 (`gatt_server.py`).
 
 ### Step 6.2: BLE configurator transport (`ble_client.py`)
@@ -771,6 +779,16 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q78 | Fake Wi-Fi delays | Scan 2 s, connect 3 s; tests inject instant sleep (2026-10-18, SPEC §10) |
 | Q79 | CLI test seam | `parse_args`, `run_device(args, buttons=None)`, `run_configurator(args, io=None)`; startup errors → one line, exit 1 (2026-10-18, DESIGN §5) |
 | Q80 | Two-process smoke test | Device subprocess on a pseudo-terminal, scripted `run_flow` over the socket, no sleeps; import check in a fresh subprocess (2026-10-18, DESIGN §7) |
+| Q81 | BLE local name | The CLI loads `Storage` and passes `GattServerTransport(name)`; `protocol.local_name()` shared with `Info.name` (2026-10-19, DESIGN §5) |
+| Q82 | Register without advertising | `start()` = `BlessServer.start()` minus advertising, with `bless`'s own objects; `set_advertising` idempotent (2026-10-19, DESIGN §5) |
+| Q83 | Incoming BLE writes | Queued by the synchronous handler, one task awaits the receivers in order (2026-10-19, DESIGN §5) |
+| Q84 | BLE startup failures | `bless` imported and the server created in `start()`; failures → `TransportError`, one line, exit 1 (2026-10-19, SPEC §9.1) |
+| Q85 | BLE `close()` | Step by step, each failure logged, never raises, idempotent (2026-10-19, DESIGN §5) |
+| Q86 | `info` limit | `transport.check_info()` in every device transport's `set_info` (2026-10-19, DESIGN §5) |
+| Q87 | BLE tests without a radio | Pure helpers plus a fake server via `make_server`, standing in for `_BlessGattServer`, the only code touching `bless` (2026-10-19, DESIGN §7) |
+| Q88 | Device CLI wiring | Step 6.1 wires `GattServerTransport(name)` + `NmcliBackend(state_dir=…)`; configurator stays "not available" until 6.2 (2026-10-19) |
+| Q89 | Notification pacing | None; revisit only if the hardware runs lose chunks (2026-10-19) |
+| Q90 | `bless` side effects | Adapter alias and the `Released!` line accepted, in the README troubleshooting (2026-10-19) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

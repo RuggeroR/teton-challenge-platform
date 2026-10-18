@@ -15,18 +15,18 @@ import sys
 from pathlib import Path
 
 from teton_common.log import configure_logging
+from teton_common.protocol import local_name
 from teton_common.transport import DeviceTransport, TransportError
 from teton_device.buttons import ButtonSource, StatusLine, TerminalButtons
+from teton_device.gatt_server import GattServerTransport
 from teton_device.service import DeviceService
+from teton_device.sim_server import SimServerTransport
 from teton_device.storage import DEFAULT_STATE_DIR, Storage, StorageError
 from teton_device.wifi.backend import WifiBackend
+from teton_device.wifi.fake import FakeWifiBackend
+from teton_device.wifi.nmcli import NmcliBackend
 
 SIM_STATE_DIR = Path.home() / ".local" / "state" / "teton-device-sim"  # review Q77
-BLE_NOT_AVAILABLE = "BLE transport not available yet; use --simulate."
-
-
-class StartupError(Exception):
-    """The device can't start. The text is one line for stderr, without secrets."""
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -65,15 +65,12 @@ def state_dir_for(args: argparse.Namespace) -> Path:
 async def run_device(args: argparse.Namespace, buttons: ButtonSource | None = None) -> int:
     """Runs the device until [Q]. Ctrl+C and SIGTERM cancel this; the service still closes
     the transport and the buttons restore the terminal on the way out (review Q76)."""
-    transport, wifi = _radio_and_wifi(args.simulate)
     screen = StatusLine(sys.stdout, log_stream=sys.stderr)
     configure_logging(verbose=args.verbose, stream=screen)
+    storage = Storage(state_dir_for(args))
+    transport, wifi = radio_and_wifi(args, storage)
     service = DeviceService(
-        transport,
-        wifi,
-        Storage(state_dir_for(args)),
-        buttons or TerminalButtons(),
-        status_line=screen,
+        transport, wifi, storage, buttons or TerminalButtons(), status_line=screen
     )
     loop = asyncio.get_running_loop()
     main_task = asyncio.current_task()
@@ -87,21 +84,17 @@ async def run_device(args: argparse.Namespace, buttons: ButtonSource | None = No
     return 0
 
 
-def _radio_and_wifi(simulate: bool) -> tuple[DeviceTransport, WifiBackend]:
-    if simulate:
-        from teton_device.sim_server import SimServerTransport
-        from teton_device.wifi.fake import FakeWifiBackend
-
+def radio_and_wifi(
+    args: argparse.Namespace, storage: Storage
+) -> tuple[DeviceTransport, WifiBackend]:
+    """The simulated pair, or Bluetooth and NetworkManager. Neither imports bless here: the
+    BLE transport imports it when it starts (review Q84)."""
+    if args.simulate:
         return SimServerTransport(), FakeWifiBackend()
-    # Imported only here, so bless is never loaded in simulation or in the tests. Until
-    # Phase 6 writes GattServerTransport, this import fails.
-    try:
-        from teton_device.gatt_server import GattServerTransport  # type: ignore[attr-defined]
-    except ImportError:
-        raise StartupError(BLE_NOT_AVAILABLE) from None
-    from teton_device.wifi.nmcli import NmcliBackend
-
-    return GattServerTransport(), NmcliBackend()
+    # The radio needs the name before the service loads the state, so load it here
+    # (review Q81). A corrupt state.json fails now, with one line.
+    device_id = storage.load_or_create().device_id
+    return GattServerTransport(local_name(device_id)), NmcliBackend(state_dir=state_dir_for(args))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -110,6 +103,6 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(run_device(args))
     except (KeyboardInterrupt, asyncio.CancelledError):
         return 0  # Ctrl+C or SIGTERM: run_device has already shut down cleanly
-    except (StartupError, StorageError, TransportError) as exc:
+    except (StorageError, TransportError) as exc:
         print(f"teton-device: {exc}", file=sys.stderr)
         return 1

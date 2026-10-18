@@ -21,7 +21,6 @@ from teton_common.protocol import (
     CONFIRM_BYTES,
     DEVICE_ID_PREFIX,
     HANDSHAKE_NONCE_BYTES,
-    LOCAL_NAME_PREFIX,
     MAX_INFO_BYTES,
     MAX_SEQ,
     PROTOCOL_VERSION,
@@ -33,6 +32,7 @@ from teton_common.protocol import (
     Security,
     StatusState,
     StatusWarning,
+    local_name,
 )
 
 MAX_SSID_BYTES = 32  # Wi-Fi limits the SSID in bytes, not characters
@@ -294,7 +294,7 @@ class Info:
     @property
     def name(self) -> str:
         """BLE local name: prefix + last 4 characters of the device ID (SPEC §3)."""
-        return LOCAL_NAME_PREFIX + self.device_id[-4:]
+        return local_name(self.device_id)
 
     def __post_init__(self) -> None:
         check_device_id(self.device_id)

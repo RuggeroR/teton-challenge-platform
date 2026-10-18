@@ -16,6 +16,12 @@ DEVICE_ID_PREFIX: Final = "TETON-"  # + 6 uppercase hex characters (SPEC §3)
 LOCAL_NAME_PREFIX: Final = "Teton-"  # + last 4 characters of the device ID (SPEC §3)
 
 
+def local_name(device_id: str) -> str:
+    """The BLE local name, e.g. TETON-3F9A2C -> Teton-9A2C (SPEC §3). Used by Info.name and
+    by the CLI, which hands it to the BLE transport (review Q81)."""
+    return LOCAL_NAME_PREFIX + device_id[-4:]
+
+
 class Channel(StrEnum):
     """The four logical channels; over BLE each is one GATT characteristic (SPEC §4)."""
 
