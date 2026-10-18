@@ -1,0 +1,1 @@
+Error: Connection activation failed: IP configuration could not be reserved (no available address, timeout, etc.)

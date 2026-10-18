@@ -1,0 +1,14 @@
+
+===| nmcli interactive connection editor |===
+
+Editing existing '802-11-wireless' connection: 'teton-stdin-test'
+
+Type 'help' or '?' for available commands.
+Type 'print' to show all the connection properties.
+Type 'describe [<setting>.<prop>]' for detailed property description.
+
+You may edit the following settings: connection, 802-11-wireless (wifi), 802-11-wireless-security (wifi-sec), 802-1x, ethtool, match, ipv4, ipv6, hostname, link, tc, proxy
+nmcli> set wifi-sec.psk short
+nmcli> save
+Error: Failed to save 'teton-stdin-test' (761301d0-c05b-4b93-82b6-8edea67c4e6d) connection: 802-11-wireless-security.psk: property is invalid
+nmcli> quit

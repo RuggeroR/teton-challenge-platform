@@ -1,3 +1,52 @@
-# Project metadata (to be implemented): package `teton-provisioning`, Python >=3.12,
-# deps cryptography/structlog/bless/bleak/qrcode, dev extras pytest/pytest-asyncio/ruff,
-# console scripts `teton-device` and `teton-configurator`. See docs/DESIGN.md §8.
+# One distribution with three importable packages and two console scripts.
+# Dependencies are limited to docs/DESIGN.md §8.
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teton-provisioning"
+version = "0.1.0"
+description = "Wi-Fi provisioning over Bluetooth Low Energy with end-to-end encrypted credentials"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=44",
+    "structlog>=24.1",
+    "bless>=0.3",
+    "bleak>=1.1",
+    "qrcode>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.0",
+    "ruff>=0.15",
+]
+
+[project.scripts]
+teton-device = "teton_device.cli:main"
+teton-configurator = "teton_configurator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.format]
+# Code blocks in the docs are hand-aligned sketches, not code to format.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import sorting, pyupgrade, bugbear
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Plain `async def test_...` functions run without a per-test marker.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
