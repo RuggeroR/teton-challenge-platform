@@ -31,6 +31,25 @@ ASK_PASSWORD = "Wi-Fi password: "
 ASK_USERNAME = "Username: "
 ASK_CA_FILE = "Certificate file from IT (optional, press Enter to skip): "
 ASK_DOMAIN = "Server domain from IT (optional, press Enter to skip): "
+STOPPED = "Setup stopped. Run the configurator again to start over."
+
+# ---------------------------------------------------------------------------
+# Menus of the guided flow (reviews Q39-Q46). Menus accept a number, or q to quit.
+
+ASK_LOOK_AGAIN = "Press Enter to look again, or type q to quit: "
+ASK_DEVICE = "Device number (q to quit): "
+ASK_NETWORK = "Network number (q to quit): "
+ASK_SECURITY = "Security type number (q to quit): "
+ASK_NEXT = "What next? Number (q to quit): "
+SCAN_AGAIN = "Scan again"
+NO_NETWORKS = (
+    "The device found no networks it can join. Scan again, or pick the hidden network option."
+)
+INVALID_CHOICE = "That is not one of the numbers shown. Type a number from the list, or q to quit."
+RETRY_PASSWORD = "Try again (retype the password)"
+RETRY_LOGIN = "Try again (retype the username and password)"
+PICK_ANOTHER_NETWORK = "Pick another network"
+QUIT = "Quit"
 
 
 def connecting_text(ssid: str) -> str:
@@ -148,6 +167,16 @@ INVALID_PASSWORD_LENGTH = "A Wi-Fi password has 8 to 63 characters. Check it and
 # The limit is 32 bytes; "characters" is right for the plain-ASCII names most networks use.
 INVALID_NETWORK_NAME = "A network name has 1 to 32 characters. Check it and type it again."
 REQUIRED = "This can't be empty. Type it again."
+CA_FILE_UNREADABLE = (
+    "This file can't be opened. Check the path and type it again, or press Enter to skip."
+)
+CA_FILE_TOO_LARGE = (
+    "This file is too large to be a certificate. "
+    "Ask IT for the certificate file and type its path again."
+)
+CA_FILE_NOT_CERTIFICATE = (
+    "This file is not a certificate. Ask IT for the certificate file and type its path again."
+)
 
 # ---------------------------------------------------------------------------
 # The network list (review Q30)
@@ -160,6 +189,13 @@ _SECURITY_LABELS: dict[Security, str] = {
     Security.WPA2_EAP_PEAP: "enterprise",
 }  # one per entry of CAPS; open is never in a scan list (review Q11)
 
+# The hidden-network choice, in router-label wording (review Q42).
+_HIDDEN_SECURITY_LABELS: dict[Security, str] = {
+    Security.WPA2_PSK: "WPA2/WPA3 Personal (password)",
+    Security.WPA3_SAE: "WPA3 Personal only (password)",
+    Security.WPA2_EAP_PEAP: "WPA2 Enterprise (username and password)",
+}
+
 
 def signal_bars(signal: int) -> str:
     """0-100 -> 1 to 4 bars, padded to the same width so the list lines up."""
@@ -167,6 +203,19 @@ def signal_bars(signal: int) -> str:
     return _BARS[:count].ljust(len(_BARS))
 
 
-def network_label(net: NetworkInfo) -> str:
-    """e.g. "Home-PSK  ▂▄▆█  password"."""
-    return f"{net.ssid}  {signal_bars(net.signal)}  {_SECURITY_LABELS[net.security]}"
+def network_label(net: NetworkInfo, width: int = 0) -> str:
+    """e.g. "Home-PSK  ▂▄▆█  password". `width` pads the name so a list lines up."""
+    return f"{net.ssid.ljust(width)}  {signal_bars(net.signal)}  {_SECURITY_LABELS[net.security]}"
+
+
+def device_label(name: str, signal: int) -> str:
+    """e.g. "Teton-9A2C  ▂▄▆█"."""
+    return f"{name}  {signal_bars(signal)}"
+
+
+def hidden_security_label(security: Security) -> str:
+    return _HIDDEN_SECURITY_LABELS[security]
+
+
+def menu_line(number: int, text: str) -> str:
+    return f"  {number}) {text}"

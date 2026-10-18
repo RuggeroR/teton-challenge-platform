@@ -119,6 +119,10 @@ MAX_SEQ: Final = 2**64 - 1  # seq becomes the last 8 bytes of the AES-GCM nonce
 # Limits. Units are part of each name.
 CHUNK_SIZE_BYTES: Final = 20  # fixed, the minimum every BLE link supports (plan_v5 S2)
 MAX_MESSAGE_BYTES: Final = 8192  # fits a CA certificate PEM (SPEC §4.1)
+# A CA certificate PEM sent in set_credentials (review Q43). MAX_MESSAGE_BYTES limits the
+# framed envelope, where base64 of the ciphertext adds a third, leaving about 5.4 KB for
+# the PEM; 4096 keeps a margin for the other fields. A typical CA PEM is 1.2-2 KB.
+MAX_CA_PEM_BYTES: Final = 4096
 MAX_INFO_BYTES: Final = 180  # `info` must fit in a single GATT read (SPEC §4.1)
 REASSEMBLY_TIMEOUT_S: Final = 10  # drop a partial message after this (SPEC §4.1)
 SESSION_IDLE_TIMEOUT_S: Final = 300  # end a session without traffic (SPEC §5.4)

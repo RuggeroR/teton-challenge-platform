@@ -439,17 +439,18 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** the six-step technician experience of SPEC §9.2, testable without a terminal.
 - **Files:** `src/teton_configurator/flow.py`, `tests/test_flow.py`.
 - **Content:**
-  - `run_flow(discover, connect, io)`, where `io` wraps `input` and `print`, so tests can script the answers.
+  - `run_flow(discover, connect, io, make_client)`, where `discover() -> list[FoundDevice]`, `connect(found) -> ClientTransport` (not yet connected) and `io` has `ask`, `ask_secret` and `show`, so tests can script the answers (Q38). Returns 0 when connected, else 1.
   - The steps:
-    1. Ask the technician to press the pairing button on the device, then pick a device.
-    2. Type the code. On a wrong code, explain and offer to retype.
-    3. Pick a network, or "Other (hidden) network".
-    4. Enter the credentials for that security type (for Enterprise: an optional CA file path and an optional domain).
-    5. Watch the progress.
-    6. See the result, and on failure retry from the network or credentials step.
-  - Signal bars, and a lock or "enterprise" label next to each network.
-  - The password is read with `getpass`.
-- **Tests (scripted io + memory transport + fake Wi-Fi):** the happy path output contains "Connected" and the IP; a wrong code, then retype, then success; a wrong password, then retry, then success; a hidden network; the server-not-verified warning is shown for PEAP without a CA.
+    1. Ask the technician to press the pairing button on the device, then pick a device from a numbered list; Enter picks the only one; none found → look again (Q39).
+    2. Type the code. A bad format, a wrong code or a rate limit is explained, then the code is asked again (Q40).
+    3. Pick a network, "Other (hidden) network" or "Scan again" (Q41, Q42).
+    4. Enter the credentials for that security type (for Enterprise: an optional CA file, checked against `MAX_CA_PEM_BYTES` and parsed as PEM, and an optional domain; Q43).
+    5. Watch the progress: one line (Q47).
+    6. See the result, and on failure retry with the same network or pick another (Q44).
+  - Signal bars and "password" / "enterprise" next to each network (Q30).
+  - The password is read with `getpass`. q quits at menus; end of input quits; the transport is always closed (Q46).
+- **Tests (scripted io + the real `DeviceService` over the memory transport + fake Wi-Fi):** the happy path output contains "Connected" and the IP; a wrong code, then retype, then success; a wrong password, then retry, then success; a hidden network; the server-not-verified warning for PEAP without a CA, and none with a CA file; the limited-internet warning; no device found, then found; rescan; bad CA files; no reply (Q22); no result in time; quit and end of input; the largest allowed request fits one message.
+- **Decided:** Q38–Q47.
 - **Verify:** `pytest tests/test_flow.py -v`
 - **Implements:** SPEC §9.2, §7.
 
@@ -720,6 +721,16 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q35 | What a client survives | Wrong code / rate limit: handshake again; `failed`: retry; no reply / lost / protocol error: finished (2026-10-18) |
 | Q36 | Lost connection | No disconnect event: `TransportError` → `ConnectionLostError`, a silent drop → `NoReplyError` (2026-10-18) |
 | Q37 | Test client vs real client | `ClientChannel` shared by `ProvisioningClient` and the tests' `Configurator`; the device rig moves to the helper (2026-10-18) |
+| Q38 | What the flow is given | `discover() -> list[FoundDevice]`, `connect(found) -> ClientTransport` (unconnected), `io` with `ask` / `ask_secret` / `show`; exit 0 or 1 (2026-10-18, DESIGN §5) |
+| Q39 | Picking a device | Numbered list, Enter picks the only one; none found → look again (2026-10-18, SPEC §9.2) |
+| Q40 | Typing the code | Bad format / wrong code / rate limited: explain and ask again; no sleep, no limit (2026-10-18, SPEC §9.2) |
+| Q41 | Network menu | Plus "Scan again"; an empty scan has its own text (2026-10-18, SPEC §9.2) |
+| Q42 | Hidden network | Name, then security from `info.caps` with router-label wording; `hidden=True` (2026-10-18, SPEC §9.2) |
+| Q43 | Enterprise and CA file | No anonymous identity; CA file ≤ 4096 bytes (`MAX_CA_PEM_BYTES`), parsed as PEM; SPEC §4.1 corrected (2026-10-18) |
+| Q44 | After the result | Connected → exit 0; failed → retry / other network / quit; refused → network menu; no reply, lost, unexpected → exit 1 (2026-10-18, SPEC §9.2) |
+| Q45 | PEAP without CA or domain | Only the device's warning after connecting (2026-10-18) |
+| Q46 | Quit and end of input | q at menus, EOF = quit, transport always closed; Ctrl+C in `cli.py` (2026-10-18) |
+| Q47 | Progress | One line at `connecting`, no spinner (2026-10-18) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

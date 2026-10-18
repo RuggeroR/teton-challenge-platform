@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.5, 2026-10-18. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5); 1.5 applies the Phase 3 review decisions so far (Q25–Q30: configurator texts, §6; Q31–Q37: the protocol client, §5). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.5, 2026-10-18. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5); 1.5 applies the Phase 3 review decisions so far (Q25–Q30: configurator texts, §6; Q31–Q37: the protocol client, §5; Q38–Q47: the guided flow, §5). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -223,6 +223,22 @@ class ProvisioningClient:                        # teton_configurator/client.py
 # NoReplyError, DeviceRefusedError(code), ProtocolError (incl. a device_id that differs from
 # info, Q34), ConnectionLostError (a TransportError; no disconnect event, Q36). After
 # NoReplyError, ConnectionLostError or ProtocolError the client is finished (Q35).
+
+@dataclass(frozen=True)
+class FoundDevice:                               # teton_configurator/flow.py (Q38)
+    name: str                                    # Teton-9A2C
+    signal: int                                  # 0-100; BLE converts RSSI
+    address: str                                 # how the transport finds it again
+
+class FlowIO(Protocol):                          # teton_configurator/flow.py
+    async def ask(self, prompt: str) -> str: ...                # input(), in a thread
+    async def ask_secret(self, prompt: str) -> str: ...         # getpass(), in a thread
+    def show(self, text: str) -> None: ...
+
+async def run_flow(discover, connect, io, make_client=ProvisioningClient) -> int: ...
+# discover() -> list[FoundDevice]; connect(found) -> ClientTransport, not yet connected.
+# 0 when connected, 1 otherwise. ask/ask_secret run input() in a thread, so the event loop
+# (and the BLE connection) keeps running while the technician types.
 ```
 
 `crypto.py` exposes a pure, synchronous API: `Handshake` objects for each role that produce and consume handshake messages, and an `Envelope` (`seal(plaintext) -> bytes`, `open(bytes) -> plaintext`) that tracks sequence numbers.

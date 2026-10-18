@@ -16,6 +16,7 @@ from teton_common.protocol import (
     StatusWarning,
 )
 from teton_configurator import ui_text
+from teton_configurator.flow import HIDDEN_SECURITY
 
 JARGON = ("nmcli", "GATT", "BLE", "exception", "traceback", "D-Bus")
 # Word boundaries, so "BLE" doesn't match "unable" (review Q29).
@@ -33,6 +34,10 @@ INPUT_CHECKS = (
     ui_text.INVALID_PASSWORD_LENGTH,
     ui_text.INVALID_NETWORK_NAME,
     ui_text.REQUIRED,
+    ui_text.INVALID_CHOICE,
+    ui_text.CA_FILE_UNREADABLE,
+    ui_text.CA_FILE_TOO_LARGE,
+    ui_text.CA_FILE_NOT_CERTIFICATE,
 )
 
 
@@ -45,13 +50,15 @@ def failure_texts() -> list[str]:
         *CONFIGURATOR_FAILURES,
         *INPUT_CHECKS,
         ui_text.NO_DEVICE_FOUND,
+        ui_text.NO_NETWORKS,
     ]
 
 
 def every_text() -> list[str]:
     constants = [v for k, v in vars(ui_text).items() if k.isupper() and isinstance(v, str)]
     results = [ui_text.connected_text("192.168.1.23", i) for i in InternetStatus]
-    return [*constants, *failure_texts(), *results, ui_text.connecting_text("Home-PSK")]
+    labels = [ui_text.hidden_security_label(s) for s in HIDDEN_SECURITY]
+    return [*constants, *failure_texts(), *results, *labels, ui_text.connecting_text("Home-PSK")]
 
 
 # --- coverage: a new enum value fails here until it gets a text ---------------------------
@@ -76,6 +83,11 @@ def test_every_warning_has_a_text(warning: StatusWarning) -> None:
 def test_every_listed_security_type_has_a_label(security: Security) -> None:
     net = NetworkInfo(ssid="Net", signal=50, security=security)
     assert ui_text.network_label(net).endswith(("password", "enterprise"))
+
+
+@pytest.mark.parametrize("security", HIDDEN_SECURITY)
+def test_every_hidden_network_security_type_has_a_label(security: Security) -> None:
+    assert ui_text.hidden_security_label(security)  # review Q42
 
 
 # --- plain language -------------------------------------------------------------------
@@ -153,3 +165,5 @@ def test_network_label() -> None:
     assert ui_text.network_label(home) == "Home-PSK  ▂▄▆█  password"
     assert ui_text.network_label(hospital) == "Hospital-EAP  ▂▄▆   enterprise"
     assert "🔒" not in ui_text.network_label(home)
+    assert ui_text.network_label(home, width=12) == "Home-PSK      ▂▄▆█  password"  # lines up
+    assert ui_text.device_label("Teton-9A2C", 80) == "Teton-9A2C  ▂▄▆█"
