@@ -15,16 +15,16 @@ import termios
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from teton_common.log import configure_logging
-from teton_configurator import ui_text
+from teton_configurator import sim_client, ui_text
+from teton_configurator.ble_client import BleDiscovery, BluetoothUnavailableError
 from teton_configurator.flow import Connect, Discover, FlowIO, FoundDevice, TerminalIO, run_flow
 
-BLE_NOT_AVAILABLE = "BLE transport not available yet; use --simulate."
 EXIT_INTERRUPTED = 130  # the shell convention for Ctrl+C (128 + SIGINT)
 
-
-class StartupError(Exception):
-    """The configurator can't start. The text is one line for stderr."""
+log = structlog.get_logger()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -43,29 +43,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 async def run_configurator(args: argparse.Namespace, io: FlowIO | None = None) -> int:
     """The exit code of the guided flow: 0 when the device is connected, else 1."""
-    discover, connect = _radio(args.simulate)
     configure_logging(verbose=args.verbose, stream=sys.stderr, default_level=logging.WARNING)
-    return await run_flow(discover, connect, io or TerminalIO())
+    io = io or TerminalIO()
+    discover, connect = _radio(args.simulate)
+    try:
+        return await run_flow(discover, connect, io)
+    except BluetoothUnavailableError as exc:
+        log.warning("bluetooth_unavailable", reason=str(exc))
+        io.show(ui_text.BLUETOOTH_UNAVAILABLE)  # not a traceback (review Q99)
+        return 1
 
 
 def _radio(simulate: bool) -> tuple[Discover, Connect]:
     if simulate:
-        from teton_configurator import sim_client
 
         def connect(found: FoundDevice) -> sim_client.SimClientTransport:
             return sim_client.SimClientTransport(Path(found.address))
 
         return sim_client.discover, connect
-    # Imported only here, so bleak is never loaded in simulation or in the tests. Until
-    # Phase 6 writes them, this import fails.
-    try:
-        from teton_configurator.ble_client import (  # type: ignore[attr-defined]
-            BleClientTransport,
-            discover,
-        )
-    except ImportError:
-        raise StartupError(BLE_NOT_AVAILABLE) from None
-    return discover, BleClientTransport
+    # bleak is imported only when the scan starts, so it never loads in simulation.
+    discovery = BleDiscovery()
+    return discovery.discover, discovery.connect
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,9 +79,6 @@ def main(argv: list[str] | None = None) -> int:
         # library's stdin lock, and a normal exit would wait for that lock for ever. The
         # transport is closed and the output flushed, so end the process right here.
         os._exit(EXIT_INTERRUPTED)
-    except StartupError as exc:
-        print(f"teton-configurator: {exc}", file=sys.stderr)
-        return 1
 
 
 def _terminal_settings() -> list[Any] | None:

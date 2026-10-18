@@ -1,6 +1,6 @@
 # Tests for the two CLIs, which only wire components (review Q79): argument parsing, the
 # state directory, the simulated device run with injected buttons, the radio and Wi-Fi each
-# mode uses, the configurator's missing BLE transport, startup errors, no bless/bleak import
+# mode uses, Bluetooth off on the configurator, startup errors, no bless/bleak import
 # in simulation, and the real processes: a two-process smoke test over the socket (review
 # Q80), SIGTERM on the device (Q76) and Ctrl+C on the configurator (Q75).
 #
@@ -31,6 +31,7 @@ from teton_common.sim_wire import SOCKET_NAME
 from teton_common.transport import TransportError
 from teton_configurator import cli as configurator_cli
 from teton_configurator import sim_client, ui_text
+from teton_configurator.ble_client import BleDiscovery
 from teton_configurator.flow import FoundDevice, run_flow
 from teton_device import cli as device_cli
 from teton_device.buttons import Button, QueueButtons
@@ -156,11 +157,24 @@ def test_without_simulate_a_corrupt_state_file_is_one_line(
     assert capsys.readouterr().err.splitlines()[-1].endswith("is not readable JSON")
 
 
-def test_configurator_without_simulate_says_ble_is_not_available(
-    capsys: pytest.CaptureFixture[str],
+def test_without_simulate_the_configurator_uses_ble_discovery() -> None:
+    discover, connect = configurator_cli._radio(simulate=False)
+    assert isinstance(discover.__self__, BleDiscovery)  # type: ignore[attr-defined]
+    assert connect.__self__ is discover.__self__  # type: ignore[attr-defined]
+
+
+async def test_bluetooth_off_is_one_sentence_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert configurator_cli.main([]) == 1
-    assert "BLE transport not available yet" in capsys.readouterr().err
+    """No adapter or Bluetooth off: the technician gets one plain sentence (review Q99)."""
+
+    async def no_bluetooth(seconds: float) -> list[tuple[object, object]]:
+        raise OSError("org.bluez.Error.NotReady: Resource Not Ready")
+
+    monkeypatch.setattr(configurator_cli, "BleDiscovery", lambda: BleDiscovery(no_bluetooth))
+    io = ScriptedIO()
+    assert await configurator_cli.run_configurator(configurator_cli.parse_args([]), io) == 1
+    assert io.lines[-1] == ui_text.BLUETOOTH_UNAVAILABLE
 
 
 # --- the simulated device, in this process ------------------------------------------------

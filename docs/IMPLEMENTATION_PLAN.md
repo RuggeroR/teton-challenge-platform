@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 9, 2026-10-19. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80); version 9 records the Step 6.1 answers (plan_v5, "Phase 6 review questions", Q81–Q90). If this plan disagrees with those documents, they win.
+Version 9, 2026-10-19. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80); version 9 records the Step 6.1 and 6.2 answers (plan_v5, "Phase 6 review questions", Q81–Q101). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -101,7 +101,7 @@ Setup: Ubuntu 24.04.5, kernel 7.0.0-38, BlueZ 5.72, Intel Meteor Lake CNVi adapt
 | g | Advertising while connected | ⚠️ different from expected | The controller **ends advertising when a client connects** (`LE Advertising Set Terminated`), and the kernel **re-enables it about 30 ms after the disconnect** (`LE Set Extended Advertising Enable`). The connection survives unregistering the advertisement |
 | h | No pairing | ✅ | 0 SMP (pairing) packets in either capture |
 | i | Long reads | ✅ at MTU 517, untested at small MTU | 204 bytes fit in one packet. `bless` ignores the read `offset`, so a long read at a small MTU would return garbage; the spike's patch returns the right slice |
-| — | `bleak` central (`ble_central.py`) | ⏳ | Needs the second laptop; run before Step 6.2 |
+| — | `bleak` central (`ble_central.py`) | superseded | Superseded by Step 6.2's Verify, with the real device and configurator; the MTU read is unnecessary since S2 (review Q101) |
 
 Observations:
 - Android uses a new random (resolvable) address on every connection, so a phone can be told apart within a connection but not recognised later.
@@ -549,14 +549,19 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 ### Step 6.2: BLE configurator transport (`ble_client.py`)
 
 - **Goal:** discovery and the GATT client with `bleak`.
-- **Files:** `src/teton_configurator/ble_client.py`, `tests/test_ble_client.py`.
+- **Before:** Step 0.3 on laptop 2 (review Q101).
+- **Files:** `src/teton_configurator/ble_client.py`, `tests/test_ble_client.py`; `src/teton_common/framing.py`, `tests/test_framing.py` (Q94); `src/teton_configurator/cli.py`, `ui_text.py`, `tests/test_cli.py` (Q99).
 - **Content:**
-  - Scan for 10 s filtered by the service UUID, and list devices by name and signal.
-  - Connect, subscribe to `session` and `status` **before** writing `hello`, then read `info`. No MTU handling (S2), so only public `bleak` API.
-  - Writes use write-with-response, so chunks arrive in order.
+  - `BleDiscovery.discover()`: scan for 10 s filtered by the service UUID (`BleakScanner.discover(..., return_adv=True)`), strongest first, named by the advertised local name; signal = `clamp(2 × (rssi + 100), 0, 100)` (Q91, Q92). It keeps the scanned `BLEDevice`s, so `connect(found)` doesn't scan again (Q93). No adapter or Bluetooth off → `TransportError`, shown by the CLI as `ui_text.BLUETOOTH_UNAVAILABLE`, exit 1 (Q99).
+  - `BleClientTransport.connect()`: connect (10 s), subscribe to `session` and `status` **before** writing `hello`, check the Teton service is there; `read_info()` reads `info`. No MTU handling (S2), so only public `bleak` API. Every `bleak`, D-Bus or timeout error becomes `TransportError` (Q95).
+  - Notifications only do `Inbox.put()`, delivered in order (Q96); `disconnected_callback` only marks the transport not connected (Q97); `close()` is idempotent and never raises.
+  - Writes use write-with-response, so chunks arrive in order (Q98).
   - `bleak` is imported lazily.
-- **Tests (no radio):** the pure helpers (signal to bars, device list formatting); importing without `bleak` used.
+  - The reassembly timeout counts from the last chunk, not the first (Q94).
+  - `teton-configurator` without `--simulate` uses `BleDiscovery` (Q99).
+- **Tests (no radio):** the pure helpers (RSSI to signal, device list from scan results); building the transport doesn't import `bleak` (fresh interpreter); with a fake `bleak`-shaped client injected through `make_client` (Q100): subscribing comes before anything else, notifications in order, writes with `response=True`, a missing service, send after the disconnect callback, idempotent close, errors as `TransportError`; a slow message that keeps progressing is not dropped (Q94); the CLI wiring and the Bluetooth-off sentence.
 - **Verify (🔧 both laptops):** laptop A `teton-device run`, then press [P]; laptop B `teton-configurator`. The device appears; the code is accepted; the scan list shows the real networks around laptop A. Stop before entering credentials. That comes in 6.3.
+- **Decided:** Q91–Q101.
 - **Implements:** SPEC §4, §9.2 (steps 1–4). DESIGN §2 (`ble_client.py`).
 
 ### Step 6.3: 🔧 HARDWARE: real Wi-Fi run and evidence
@@ -789,6 +794,17 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q88 | Device CLI wiring | Step 6.1 wires `GattServerTransport(name)` + `NmcliBackend(state_dir=…)`; configurator stays "not available" until 6.2 (2026-10-19) |
 | Q89 | Notification pacing | None; revisit only if the hardware runs lose chunks (2026-10-19) |
 | Q90 | `bless` side effects | Adapter alias and the `Released!` line accepted, in the README troubleshooting (2026-10-19) |
+| Q91 | RSSI to signal | `clamp(2 × (rssi + 100), 0, 100)`, NetworkManager's scale (2026-10-19, SPEC §9.2) |
+| Q92 | BLE discovery | 10 s, service UUID filter, strongest first, advertised local name (2026-10-19, DESIGN §5) |
+| Q93 | Connecting to what was found | `BleDiscovery` keeps the `BLEDevice`s for `connect(found)` (2026-10-19, DESIGN §5) |
+| Q94 | Reassembly timeout | 10 s from the last chunk, not the first; write-without-response in reserve (2026-10-19, SPEC §4.1) |
+| Q95 | BLE `connect()` | Connect (10 s), subscribe, check the service; errors → `TransportError` (2026-10-19, DESIGN §5) |
+| Q96 | BLE notifications | Sync callback → `Inbox.put()`, delivered in order (2026-10-19, DESIGN §5) |
+| Q97 | BLE disconnects | `disconnected_callback` only marks not connected; idempotent `close()` (2026-10-19, DESIGN §5) |
+| Q98 | BLE writes | `response=True`, public `bleak` API only (2026-10-19) |
+| Q99 | Configurator CLI, Bluetooth off | `BleDiscovery` without `--simulate`; `ui_text.BLUETOOTH_UNAVAILABLE`, exit 1 (2026-10-19, SPEC §9.2) |
+| Q100 | BLE client tests | Pure helpers, no-`bleak` import check, fake `bleak`-shaped client via `make_client` (2026-10-19, DESIGN §7) |
+| Q101 | Pending hardware checks | Step 0.3 before 6.2's Verify; central spike superseded (2026-10-19) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

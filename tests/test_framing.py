@@ -96,6 +96,23 @@ def test_partial_message_times_out_after_10_seconds() -> None:
     assert reassemble(frame(b"new"), r) == b"new"
 
 
+def test_a_slow_message_that_keeps_arriving_is_not_dropped() -> None:
+    """Over BLE a CA certificate can take more than 10 s in total; only a 10 s gap between
+    two chunks drops it (review Q94)."""
+    clock = FakeClock()
+    r = Reassembler(clock)
+    chunks = frame(b"c" * 2000)  # 101 chunks
+    for chunk in chunks[:-1]:
+        assert r.feed(chunk) is None
+        clock.now += 0.2  # 20 s in total
+    assert r.feed(chunks[-1]) == b"c" * 2000
+
+    # A gap of more than 10 s still drops the partial message.
+    r.feed(chunks[0])
+    clock.now += 10.1
+    assert reassemble(frame(b"after"), r) == b"after"
+
+
 def test_separate_reassemblers_per_channel() -> None:
     session, status = Reassembler(), Reassembler()
     a, b = frame(b"A" * 45), frame(b"B" * 45)

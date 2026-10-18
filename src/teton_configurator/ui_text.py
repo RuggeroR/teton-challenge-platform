@@ -21,6 +21,9 @@ from teton_common.protocol import (
 PRESS_PAIRING_BUTTON = "Press the pairing button on the device. Its light starts blinking blue."
 LOOKING_FOR_DEVICES = "Looking for devices..."
 NO_DEVICE_FOUND = "No device found. Press the pairing button on the device and try again."
+BLUETOOTH_UNAVAILABLE = (  # review Q99
+    "Bluetooth is off or missing on this computer. Turn it on and run the configurator again."
+)
 ASK_SETUP_CODE = "Setup code (printed on the device label): "
 CHECKING_CODE = "Checking the setup code..."
 CODE_ACCEPTED = "Setup code accepted."

@@ -44,7 +44,7 @@ Things to try:
 - Restart the device after connecting it: it stays green and doesn't advertise. The simulation keeps its state in `~/.local/state/teton-device-sim` (change it with `--state-dir PATH`), apart from a real device's.
 - A second configurator can't find or connect to the device while the first is connected, as with Bluetooth.
 
-The device's logs are JSON lines on stderr (the screen is stdout). To keep them apart: `teton-device run --simulate 2> device.log`. Add `--verbose` to either command for debug logs. Without `--simulate`, the device uses Bluetooth and NetworkManager; the configurator says "BLE transport not available yet" until its Bluetooth transport is built.
+The device's logs are JSON lines on stderr (the screen is stdout). To keep them apart: `teton-device run --simulate 2> device.log`. Add `--verbose` to either command for debug logs. Without `--simulate`, both commands use Bluetooth, and the device uses NetworkManager for Wi-Fi.
 
 ## Requirements
 
@@ -131,4 +131,5 @@ command -v hostapd                     # /usr/sbin/hostapd (only needed for the 
 | A line like `/org/bluez/Teton9A2C/advertisement1: Released!` on the device's screen | BlueZ dropped the advertisement (for example the adapter was turned off) and `bless` printed it. Harmless; press **P** again once Bluetooth is back |
 | The phone or configurator can't connect, and the kernel log shows `Opcode 0x2036 failed: -16` | The Ubuntu Bluetooth settings panel made the adapter discoverable, which competes for advertising. Close the settings panel during runs |
 | nRF Connect hangs on the first connection attempt, with nothing in the device's logs | Restart the nRF Connect app |
+| The configurator says "Bluetooth is off or missing on this computer" | Turn Bluetooth on (`rfkill list`, `bluetoothctl power on`). Run with `--verbose` to see the reason in the logs |
 | `teton-device: no Bluetooth adapter found` | No adapter, or it is blocked: check `rfkill list` and `bluetoothctl show` (see "Check your machine") |
