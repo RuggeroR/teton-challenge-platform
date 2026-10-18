@@ -1,15 +1,17 @@
-# Tests for the in-memory transport pair: info reads, ordered delivery, advertising and
-# connection rules, BLE channel directions and chunk size, close.
+# The transport contract, checked against every transport pair that runs without a radio:
+# the in-memory pair and the simulation's Unix socket pair (review Q71). Info reads, ordered
+# delivery, advertising and connection rules, BLE channel directions and chunk size, close.
+# The `ends` and `make_ends` fixtures (conftest.py) run each test once per transport.
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 
-from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport, pair
 from teton_common.protocol import Channel
-from teton_common.transport import TransportError
+from teton_common.transport import ClientTransport, DeviceTransport, TransportError
 
-Ends = tuple[MemoryDeviceTransport, MemoryClientTransport]
+Ends = tuple[DeviceTransport, ClientTransport]
 
 
 class Collector:
@@ -58,9 +60,9 @@ async def test_chunks_arrive_on_the_right_channel_in_order(ends: Ends) -> None:
     assert await status.get() == b"reply"
 
 
-async def test_send_returns_before_delivery() -> None:
+async def test_send_returns_before_delivery(make_ends: Callable[[], Ends]) -> None:
     # Like a radio: the peer's callback runs later, not inside send().
-    device, client = pair()
+    device, client = make_ends()
     await device.start()
     await device.set_advertising(True)
     received = Collector()
@@ -73,8 +75,8 @@ async def test_send_returns_before_delivery() -> None:
     await device.close()
 
 
-async def test_connect_needs_advertising() -> None:
-    device, client = pair()
+async def test_connect_needs_advertising(make_ends: Callable[[], Ends]) -> None:
+    device, client = make_ends()
     with pytest.raises(TransportError):
         await client.connect()  # device not started
     await device.start()

@@ -11,17 +11,16 @@ import contextlib
 
 import structlog
 
-from teton_common.protocol import CHUNK_SIZE_BYTES, Channel
-from teton_common.transport import CLIENT_SENDS, DEVICE_SENDS, Receiver, TransportError
+from teton_common.protocol import Channel
+from teton_common.transport import (
+    CLIENT_SENDS,
+    DEVICE_SENDS,
+    Receiver,
+    TransportError,
+    check_chunk,
+)
 
 log = structlog.get_logger()
-
-
-def _check_send(channel: Channel, data: bytes, allowed: frozenset[Channel], side: str) -> None:
-    if channel not in allowed:
-        raise TransportError(f"the {side} cannot send on {channel}")
-    if len(data) > CHUNK_SIZE_BYTES:
-        raise TransportError(f"chunks are at most {CHUNK_SIZE_BYTES} bytes")
 
 
 class _Inbox:
@@ -98,7 +97,7 @@ class MemoryDeviceTransport:
         self._inbox.on_receive(channel, cb)
 
     async def send(self, channel: Channel, data: bytes) -> None:
-        _check_send(channel, data, DEVICE_SENDS, "device")
+        check_chunk(channel, data, DEVICE_SENDS, "device")
         if self._closed:
             raise TransportError("transport is closed")
         if self._client is not None:
@@ -148,7 +147,7 @@ class MemoryClientTransport:
         self._inbox.on_receive(channel, cb)
 
     async def send(self, channel: Channel, data: bytes) -> None:
-        _check_send(channel, data, CLIENT_SENDS, "configurator")
+        check_chunk(channel, data, CLIENT_SENDS, "configurator")
         self._require_connected()
         self._device._inbox.put(channel, data)
 

@@ -13,7 +13,7 @@ from typing import Protocol
 import structlog
 
 from teton_common.framing import FramingError, Reassembler, frame
-from teton_common.protocol import Channel
+from teton_common.protocol import CHUNK_SIZE_BYTES, Channel
 
 log = structlog.get_logger()
 
@@ -27,6 +27,15 @@ CLIENT_SENDS = frozenset({Channel.SESSION, Channel.COMMAND})  # write
 
 class TransportError(Exception):
     """The transport can't do what was asked (closed, not connected, wrong channel)."""
+
+
+def check_chunk(channel: Channel, data: bytes, allowed: frozenset[Channel], side: str) -> None:
+    """The BLE rules every transport enforces, so a bug fails in tests and simulation instead
+    of only on hardware: who may send on which channel, and chunks of at most 20 bytes."""
+    if channel not in allowed:
+        raise TransportError(f"the {side} cannot send on {channel}")
+    if len(data) > CHUNK_SIZE_BYTES:
+        raise TransportError(f"chunks are at most {CHUNK_SIZE_BYTES} bytes")
 
 
 class DeviceTransport(Protocol):
