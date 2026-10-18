@@ -21,11 +21,6 @@ def code_source() -> Iterator[str]:
     yield from CODES
 
 
-@pytest.fixture
-def state_dir(tmp_path: Path) -> Path:
-    return tmp_path / "nested" / "teton-device"  # parents don't exist yet
-
-
 def make_storage(state_dir: Path) -> Storage:
     codes = code_source()
     return Storage(state_dir, new_code=lambda: next(codes), new_id=lambda: "TETON-3F9A2C")

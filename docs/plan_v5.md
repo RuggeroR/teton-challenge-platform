@@ -1,8 +1,23 @@
 # Teton Challenge: plan v5
 
-v5, 2026-10-11, amended 2026-10-13, 2026-10-14 and 2026-10-18. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phases 2 and 3; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
+v5, 2026-10-11, amended 2026-10-13, 2026-10-14 and 2026-10-18. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phases 2, 3 and 4; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
 
 ## Changelog
+
+### v5 additions: Phase 4 review questions (2026-10-18)
+
+Decided before building the in-memory end-to-end tests (`IMPLEMENTATION_PLAN.md` Step 4.1a). Tests only: no production code changes.
+
+| Area | Before | v5 (decision) | Decided by |
+|---|---|---|---|
+| Where shared test code lives (review Q48) | Step 4.1: "shared fixtures in `conftest.py`" | **`conftest.py` holds only fixtures.** The classes and constants tests import stay in, or move to, `tests/fake_configurator.py`, because pytest advises against importing from `conftest`. Moved there: `ScriptedIO`, `RecordingWifi`, `LimitedWifi`, `ca_pem()`, `TETON` and the wait constants from `test_flow.py`; `Wire` from `test_client.py`. `test_flow`'s `run()` stays in that file: the end-to-end tests need a different `discover` (Q51), so it has one user | Ruggero (proposed by Claude) |
+| Which fixtures are shared (review Q49) | Each test file had its own copies | **`device`** (running, no [P]), **`paired_device`** (running, [P] pressed, recording Wi-Fi), **`ends`** (the memory pair), **`state_dir`** (a temp dir whose parents don't exist yet) and **`log_stream`** (the real `configure_logging` into a string, reset afterwards). **No fake-time fixture:** each rig owns its clock (`device.time`), so a separate one would be a second clock nothing advances. `test_session`'s `Rig` stays local (one user) | Ruggero (proposed by Claude) |
+| Reading the LED in tests (review Q50) | Not specified | **`Device.led()` lets one simulated second pass and returns the last `LED …` line drawn on the device's screen**, so tests assert what the device shows, not a recomputation of `led_for()`. A state shown while the flow waits (e.g. red at "What next?") is captured from a scripted answer | Ruggero (proposed by Claude) |
+| "A new configurator can't connect" (review Q51) | `test_flow`'s `discover()` ignores the radio | **In the end-to-end tests `discover()` sees the device only while it advertises**, like a BLE scan, so after success the technician gets "No device found…". One extra assertion: a direct `connect()` raises `TransportError` | Ruggero (proposed by Claude) |
+| A second `hello` mid-session (review Q52) | `run_flow` never sends a `hello` once established; the memory transport takes one client at a time | **Configurator 1 quits at the network menu; the device stays `SESSION_ESTABLISHED` (no connection tracking, S3). Configurator 2's `hello` ends the old session** (`session_ended`, reason `new hello`) and provisions. One `hello` per configurator on the wire (S3, Q4) | Ruggero (proposed by Claude) |
+| A really hidden network (review Q53) | The fake backend lists every network, so `test_flow` types "Home-PSK" as hidden | **A test-only `HiddenWifi` adds "Lab-Hidden" and leaves it out of `scan()`.** The test checks it is not in the menu, is joined with `hidden=True`, and the device ends `PROVISIONED`. `wifi/fake.py` is unchanged | Ruggero (proposed by Claude) |
+| "No real sleeps" and the configurator's waits (review Q54) | The client's waits are real `asyncio.timeout`s, not the device's fake clock | **No production change.** Reply waits are 0.5 s, never reached when the device answers; only the no-reply case waits a real 0.05 s, as in `test_flow`. The end-to-end file runs in about 0.3 s | Ruggero (proposed by Claude) |
+| Overlap with `test_flow.py` (review Q55) | Half of the scenarios exist there, UI only | **Both files stay.** The end-to-end tests add the device side (state, LED, advertising, the wire) and the runs across several configurators; `test_flow` stays about menus and texts. Nothing is removed from it | Ruggero (proposed by Claude) |
 
 ### v5 additions: Phase 3 review questions (2026-10-18)
 

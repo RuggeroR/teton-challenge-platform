@@ -4,7 +4,6 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -30,14 +29,6 @@ from teton_device.buttons import MSG_ALREADY_CONNECTED, MSG_BUSY, Button
 from teton_device.wifi.fake import FakeWifiBackend
 
 S = DeviceState
-
-
-@pytest.fixture
-async def device(tmp_path: Path) -> AsyncIterator[Device]:
-    d = Device(tmp_path)
-    await d.start()
-    yield d
-    await d.stop()
 
 
 async def pair_and_establish(d: Device) -> None:

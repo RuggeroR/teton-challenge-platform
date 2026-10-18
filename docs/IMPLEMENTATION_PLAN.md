@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 6, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"). If this plan disagrees with those documents, they win.
+Version 7, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions"). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -461,9 +461,9 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 ### Step 4.1: Full-flow tests + "no secrets in logs"
 
 - **Goal:** the whole system in one process, plus the test that enforces the secret-hygiene rule.
-- **Files:** `tests/test_end_to_end.py`, `tests/test_no_secrets_in_logs.py`, `tests/conftest.py` (shared fixtures).
+- **Files:** `tests/test_end_to_end.py`, `tests/test_no_secrets_in_logs.py`, `tests/conftest.py` (shared fixtures: `device`, `paired_device`, `ends`, `state_dir`, `log_stream`; the classes stay in `tests/fake_configurator.py`, Q48, Q49).
 - **Tests:**
-  - **End to end:** the DESIGN §7 cases (PSK ok, wrong password then retry, wrong code, portal), plus Enterprise with and without a CA, a second `hello` restarting the session, and the rate limit. Each run starts with an injected [P].
+  - **End to end (4.1a):** the real `DeviceService` and the real `run_flow` with scripted answers. Each test checks the `ui_text` the technician saw and the device's state and LED. PSK success (advertising off, the service still running); wrong password, then a retry in the same session; wrong code, then retype, with no command on the wire before the good code; captive portal (back to `SESSION_ESTABLISHED`, red LED); limited internet; PEAP with a CA (no warning) and without CA or domain (`server_not_verified`); a really hidden network (Q53); a second `hello` from a new configurator restarting the session (Q52); the rate limit, then success after the fake clock moves on; the window expiring before `hello` (no reply), then [P] again; after success no device is found (Q51), then [R][R] + [P] and the new code works. Each run starts with an injected [P].
   - **No secrets in logs:** a full simulated run, including a wrong password and a wrong code, with logging captured at DEBUG. The test asserts that none of the PSK, the EAP password, the setup code (raw or formatted), the session keys or the base64 ciphertext appears anywhere in the output.
 - **Verify:** `pytest tests/test_end_to_end.py tests/test_no_secrets_in_logs.py -v`
 - **Implements:** SPEC §12 MUST #6 (unit tests list complete). DESIGN §7 (end to end, `log`).
@@ -731,6 +731,14 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q45 | PEAP without CA or domain | Only the device's warning after connecting (2026-10-18) |
 | Q46 | Quit and end of input | q at menus, EOF = quit, transport always closed; Ctrl+C in `cli.py` (2026-10-18) |
 | Q47 | Progress | One line at `connecting`, no spinner (2026-10-18) |
+| Q48 | Where shared test code lives | `conftest.py` only fixtures; classes and constants in `tests/fake_configurator.py` (2026-10-18) |
+| Q49 | Shared fixtures | `device`, `paired_device`, `ends`, `state_dir`, `log_stream`; no fake-time fixture, each rig owns its clock (2026-10-18) |
+| Q50 | LED in tests | `Device.led()`: one simulated second, then the last `LED …` line on the device's screen (2026-10-18) |
+| Q51 | A new configurator can't connect | End-to-end `discover()` sees the device only while it advertises; plus a refused direct `connect()` (2026-10-18) |
+| Q52 | Second `hello` mid-session | Configurator 1 quits at the network menu, configurator 2's `hello` ends that session and provisions (S3, Q4) (2026-10-18) |
+| Q53 | Hidden network | Test-only `HiddenWifi`: a network left out of the scan, joined by name (2026-10-18) |
+| Q54 | No real sleeps | Client waits stay real: 0.5 s, and 0.05 s only for no reply; no production change (2026-10-18) |
+| Q55 | Overlap with `test_flow` | Both stay: end to end adds the device side and multi-run scenarios (2026-10-18) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

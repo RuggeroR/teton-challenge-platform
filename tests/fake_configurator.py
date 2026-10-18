@@ -1,25 +1,48 @@
-# Test helpers shared by test_session.py, test_service.py and test_client.py: a low-level
-# configurator for driving the device, a running device rig, and fake time.
+# Test helpers shared by the device, client, flow and end-to-end tests: a low-level
+# configurator for driving the device, a running device rig, fake time, a recording
+# transport, a scripted technician and recording Wi-Fi backends.
 # Not a test module (no test_ prefix); pytest puts tests/ on sys.path, so tests import it
-# as `fake_configurator`.
+# as `fake_configurator`. The fixtures built on these live in conftest.py (review Q48).
 #
 # The Configurator is built on the real client's ClientChannel (framing, inbox, cipher), so
 # the protocol exists only once (review Q37). It adds what only tests need: raw replies
 # instead of typed errors, invalid plaintext, and checking that nothing arrives.
 
 import asyncio
+import datetime
 import io
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
+
 from teton_common.crypto import ConfiguratorHandshake, Role, SessionCipher
+from teton_common.framing import Reassembler
 from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport
-from teton_common.messages import HelloReply, Message, SetCredentials, decode_info, encode
-from teton_common.protocol import Channel, DeviceState, Security
+from teton_common.messages import (
+    HelloReply,
+    Message,
+    SetCredentials,
+    decode_info,
+    decode_session,
+    encode,
+)
+from teton_common.protocol import Channel, DeviceState, InternetStatus, Security, StatusWarning
 from teton_configurator.client import ClientChannel, DeviceMessage
+from teton_configurator.flow import FoundDevice
 from teton_device.buttons import Button, QueueButtons, StatusLine
 from teton_device.service import DeviceService
 from teton_device.storage import Storage
-from teton_device.wifi.fake import HOME_PSK_PASSWORD, FakeWifiBackend
+from teton_device.wifi.backend import ConnectResult, Credentials
+from teton_device.wifi.fake import (
+    DEFAULT_NETWORKS,
+    HOME_PSK_PASSWORD,
+    FakeNetwork,
+    FakeWifiBackend,
+)
 
 DEVICE_ID = "TETON-3F9A2C"
 CODE = "7K2MQX9D4HTRB8WZ"
@@ -28,6 +51,11 @@ WRONG_CODE = "0123456789ABCDEF"
 HOME = SetCredentials(ssid="Home-PSK", security=Security.WPA2_PSK, psk=HOME_PSK_PASSWORD)
 WRONG_PSK = SetCredentials(ssid="Home-PSK", security=Security.WPA2_PSK, psk="not-the-password")
 RECEIVE_WAIT_S = 1  # real seconds; the memory transport delivers in a few loop turns
+# The configurator's own waits are real seconds (they don't use the device's fake clock),
+# so client and flow tests set them to fractions of a second (review Q54).
+WAIT_S = 0.5  # an answer that should come arrives within a few loop turns
+NO_REPLY_S = 0.05  # for the cases where nothing comes
+TETON = FoundDevice(name="Teton-9A2C", signal=80, address="memory")
 
 
 class FakeClock:
@@ -185,11 +213,25 @@ class Device:
     def running(self) -> bool:
         return self.task is not None and not self.task.done()
 
+    async def led(self) -> str:
+        """What the status "LED" shows now, e.g. "LED green". The controller redraws it on
+        its 1 s tick, so let one simulated second pass first (review Q50)."""
+        await self.time.advance(1)
+        return [line for line in self.screen.getvalue().splitlines() if line.startswith("LED ")][-1]
+
     async def stop(self) -> None:
         if self.running():
             self.buttons.press(Button.POWER)
             assert self.task is not None
             await asyncio.wait_for(self.task, 1)
+
+
+async def start_paired(state_dir: Path, wifi: FakeWifiBackend) -> Device:
+    """A running device whose pairing button was pressed."""
+    d = Device(state_dir, wifi=wifi)
+    await d.start()
+    await d.press(Button.PAIR)
+    return d
 
 
 async def provisioned_device(tmp_path: Path) -> Device:
@@ -199,3 +241,105 @@ async def provisioned_device(tmp_path: Path) -> Device:
     d = Device(tmp_path)
     await d.start()
     return d
+
+
+class Wire(MemoryClientTransport):
+    """The client end of the memory transport, recording every chunk the client sends."""
+
+    def __init__(self, device: MemoryDeviceTransport) -> None:
+        super().__init__(device)
+        self.sent: list[tuple[Channel, bytes]] = []
+
+    async def send(self, channel: Channel, data: bytes) -> None:
+        self.sent.append((channel, data))
+        await super().send(channel, data)
+
+    def messages(self, channel: Channel) -> list[bytes]:
+        """The whole messages sent on `channel`, reassembled from the chunks."""
+        reassembler, out = Reassembler(), []
+        for ch, chunk in self.sent:
+            if ch == channel and (msg := reassembler.feed(chunk)) is not None:
+                out.append(msg)
+        return out
+
+    def session_types(self) -> list[str]:
+        return [decode_session(m).TYPE for m in self.messages(Channel.SESSION)]
+
+
+# ---------------------------------------------------------------------------
+# The technician and the Wi-Fi, for the flow and end-to-end tests
+
+Answer = str | Callable[[], Awaitable[str]]
+
+
+class ScriptedIO:
+    """Plays the technician. An answer can be a coroutine function, to act on the device
+    (e.g. let time pass) at exactly that prompt. Running out of answers is end of input."""
+
+    def __init__(self, *answers: Answer) -> None:
+        self._answers = list(answers)
+        self.lines: list[str] = []
+        self.secret_prompts: list[str] = []
+
+    async def ask(self, prompt: str) -> str:
+        return await self._next(prompt)
+
+    async def ask_secret(self, prompt: str) -> str:
+        self.secret_prompts.append(prompt)
+        return await self._next(prompt)
+
+    def show(self, text: str) -> None:
+        self.lines.append(text)
+
+    async def _next(self, prompt: str) -> str:
+        self.lines.append(prompt)
+        if not self._answers:
+            raise EOFError
+        answer = self._answers.pop(0)
+        return answer if isinstance(answer, str) else await answer()
+
+    @property
+    def output(self) -> str:
+        return "\n".join(self.lines)
+
+    def assert_all_used(self) -> None:
+        assert self._answers == [], f"unused answers: {self._answers}"
+
+
+class RecordingWifi(FakeWifiBackend):
+    """The fake Wi-Fi, keeping what the device was asked to join."""
+
+    def __init__(self, networks: Iterable[FakeNetwork] = DEFAULT_NETWORKS) -> None:
+        super().__init__(networks, sleep=instant)
+        self.requests: list[Credentials] = []
+
+    async def connect(self, creds: Credentials, timeout_s: float) -> ConnectResult:
+        self.requests.append(creds)
+        return await super().connect(creds, timeout_s)
+
+
+class LimitedWifi(RecordingWifi):
+    """Joins, but the network has no internet: the gateway answers, the check doesn't."""
+
+    async def connect(self, creds: Credentials, timeout_s: float) -> ConnectResult:
+        return ConnectResult.success(
+            "192.168.1.23", InternetStatus.LIMITED, (StatusWarning.LIMITED_INTERNET,)
+        )
+
+
+def ca_pem() -> bytes:
+    """A freshly made, self-signed CA certificate in PEM form."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Teton Test CA")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM)
