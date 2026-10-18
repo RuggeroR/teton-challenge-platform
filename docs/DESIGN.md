@@ -133,7 +133,7 @@ Configurator                                        Device
 
 ### 4.1 Buttons and status line (`buttons.py`)
 
-- **Key reader.** `TerminalButtons` puts the terminal in single-key mode (`tty.setcbreak`, standard library) rather than raw mode, so Ctrl+C still works. Each keypress arrives at once without Enter, and stdin is read through `loop.add_reader`. The original `termios` settings are restored on exit, also after a crash. The reader yields `Button` values (`PAIR`, `RESET`, `STATUS`, `POWER`) and ignores every other key; it never collects text. Escape sequences (arrows, F1 = `ESC O P`, Alt+key) are skipped as a whole by the pure `buttons_in()`, so they can't press a button. Without a terminal it logs a warning and yields nothing; the controller keeps ticking, so the device stays on (review Q23).
+- **Key reader.** `TerminalButtons` puts the terminal in single-key mode (`tty.setcbreak`, standard library) rather than raw mode, so Ctrl+C still works. Each keypress arrives at once without Enter, and stdin is read through `loop.add_reader`. Keys typed before the reader starts are discarded (`setcbreak` flushes typed-ahead input), so a key pressed before the device listens counts for nothing. The original `termios` settings are restored on exit, also after a crash. The reader yields `Button` values (`PAIR`, `RESET`, `STATUS`, `POWER`) and ignores every other key; it never collects text. Escape sequences (arrows, F1 = `ESC O P`, Alt+key) are skipped as a whole by the pure `buttons_in()`, so they can't press a button. Without a terminal it logs a warning and yields nothing; the controller keeps ticking, so the device stays on (review Q23).
 - **Pure helpers, injected clock.** `PairingWindow(clock, duration_s=300)` (`open()`, `remaining()`, `is_open()`) and `ResetDetector(clock, within_s=3)` (`press() -> bool`, true on the second press within 3 s) hold no I/O, so tests drive them with a fake clock.
 - **Status line.** `StatusLine` derives the LED from the state, the window and the last result, by priority: yellow (connecting) > green (provisioned) > red (last attempt failed, with the reason; cleared by the next attempt or a reset) > blinking blue (window open, with countdown) > off. On a terminal it redraws one line at the bottom, and log lines are printed above it (clear the line, write the log, redraw). When stdout isn't a terminal (for example piped to `tee` for evidence), it prints LED changes as ordinary lines instead, without escape codes or countdown ticks.
 - **Controller.** `ButtonController` turns buttons into actions: [P] opens or restarts the window (or shows "Already connected. Hold reset to set up again." when provisioned), [R] arms the reset and a second [R] within 3 s runs it, [S] prints the device's status text (which ends with the code + QR, review Q23) and the window's remaining time, [Q] powers off. A 1 s tick closes an expired window, calls `DeviceActions.on_tick()` (the session idle check) and redraws the LED. The controller reads the key source through `contextlib.aclosing`, so the terminal is restored as soon as it stops, also after an exception. It calls the service through a small `DeviceActions` protocol (§5), so its tests inject buttons through `QueueButtons` (an in-memory `ButtonSource`) and a fake `DeviceActions`, with no service, transport or terminal.
@@ -189,9 +189,18 @@ class DeviceSession:                             # teton_device/session.py
     async def handle_session_msg(self, data: bytes) -> None: ...  # hello / confirm
     async def handle_command(self, data: bytes) -> None: ...      # encrypted scan / set_credentials
     def check_idle(self) -> None: ...                             # called by the service's 1 s tick
+    def end(self, reason: str) -> None: ...                       # also used by [R][R] (Q21)
+    last_result: tuple[str, ConnectResult] | None                 # (ssid, result): red LED, [S] text
 # One DeviceSession lives as long as the service and holds at most one session; a lock makes it
 # handle one message at a time, so a Wi-Fi attempt is a single step that always finishes.
 # HandshakeLimiter (same module): every hello counts until its confirm succeeds (Q4).
+# A reply whose session was ended meanwhile (e.g. [R][R] during a scan) is dropped and logged.
+
+class DeviceService:                             # teton_device/service.py, implements DeviceActions
+    def __init__(self, transport, wifi, storage, buttons, clock, sleep, status_line): ...
+    async def run(self) -> None: ...                            # until [Q] or Ctrl+C; always closes the transport
+# StateMachine(initial, on_change) calls on_change(new_state) after every transition; the
+# service uses it to keep `info.state` current, whoever caused the transition.
 
 class ProvisioningClient:                        # teton_configurator/client.py
     async def handshake(self, setup_code: str) -> DeviceInfo: ...

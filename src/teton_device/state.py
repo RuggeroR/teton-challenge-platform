@@ -4,6 +4,8 @@
 # defended) in one place. The pairing window is not a state: it is a timer in the service,
 # and it only decides which of the allowed transitions the service asks for.
 
+from collections.abc import Callable
+
 import structlog
 
 from teton_common.protocol import DeviceState
@@ -43,13 +45,20 @@ class InvalidTransition(Exception):
 
 
 class StateMachine:
-    def __init__(self, initial: DeviceState = S.UNPROVISIONED) -> None:
+    def __init__(
+        self,
+        initial: DeviceState = S.UNPROVISIONED,
+        on_change: Callable[[DeviceState], None] | None = None,
+    ) -> None:
         self._state = initial
+        self._on_change = on_change  # the service updates `info` here, whoever moved us
 
     @classmethod
-    def at_start(cls, provisioned: bool) -> "StateMachine":
+    def at_start(
+        cls, provisioned: bool, on_change: Callable[[DeviceState], None] | None = None
+    ) -> "StateMachine":
         """The state after `run` starts: only `provisioned` survives a restart."""
-        return cls(S.PROVISIONED if provisioned else S.UNPROVISIONED)
+        return cls(S.PROVISIONED if provisioned else S.UNPROVISIONED, on_change)
 
     @property
     def state(self) -> DeviceState:
@@ -64,3 +73,5 @@ class StateMachine:
             raise InvalidTransition(f"{self._state} -> {to} is not allowed")
         log.info("state_changed", from_state=self._state, to_state=to, reason=reason)
         self._state = to
+        if self._on_change is not None:
+            self._on_change(to)

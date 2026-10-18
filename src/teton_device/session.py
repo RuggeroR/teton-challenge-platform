@@ -122,6 +122,9 @@ class DeviceSession:
         self._session_id: str | None = None
         self._last_activity = clock()
         self._log = log
+        self.last_result: tuple[str, ConnectResult] | None = (
+            None  # (ssid, result) of the last attempt
+        )
         channels.on_message(Channel.SESSION, self.handle_session_msg)
         channels.on_message(Channel.COMMAND, self.handle_command)
 
@@ -139,14 +142,14 @@ class DeviceSession:
             try:
                 msg = decode_session(data)
             except MessageError as exc:
-                self._end(f"bad session message: {exc}")
+                self.end(f"bad session message: {exc}")
                 return
             if isinstance(msg, Hello):
                 await self._on_hello(msg)
             elif isinstance(msg, Confirm):
                 await self._on_confirm(msg)
             else:
-                self._end(f"unexpected {msg.TYPE} from the configurator")
+                self.end(f"unexpected {msg.TYPE} from the configurator")
             self._last_activity = self._clock()
 
     async def handle_command(self, data: bytes) -> None:
@@ -164,7 +167,7 @@ class DeviceSession:
             and not self._lock.locked()
             and self._clock() - self._last_activity >= SESSION_IDLE_TIMEOUT_S
         ):
-            self._end("idle timeout")
+            self.end("idle timeout")
 
     # --- handshake ---------------------------------------------------------------------
 
@@ -179,7 +182,7 @@ class DeviceSession:
             await self._send(Channel.SESSION, Error(ErrorCode.RATE_LIMITED, retry_after_s=wait))
             return
         if self.active:
-            self._end("new hello")  # S3: the new configurator wins
+            self.end("new hello")  # S3: the new configurator wins
         if self._state.state != DeviceState.ADVERTISING:
             log.warning("hello_refused", reason="not advertising", state=self._state.state)
             return
@@ -193,7 +196,7 @@ class DeviceSession:
         try:
             reply = self._handshake.on_hello(hello)
         except HandshakeError as exc:
-            self._end(f"bad hello: {exc}")
+            self.end(f"bad hello: {exc}")
             return
         self._log.info("handshake_started")
         await self._send(Channel.SESSION, reply)
@@ -201,17 +204,17 @@ class DeviceSession:
     async def _on_confirm(self, confirm: Confirm) -> None:
         handshake, self._handshake = self._handshake, None
         if handshake is None:
-            self._end("confirm without a hello")
+            self.end("confirm without a hello")
             return
         if self._state.state != DeviceState.ADVERTISING:
             # The window expired between hello and confirm: no new sessions after expiry.
-            self._end("pairing window closed during the handshake")
+            self.end("pairing window closed during the handshake")
             return
         try:
             keys = handshake.on_confirm(confirm)
         except HandshakeError:
             await self._send(Channel.SESSION, HandshakeFailed())
-            self._end("wrong setup code")  # already counted at hello (Q4)
+            self.end("wrong setup code")  # already counted at hello (Q4)
             return
         self._limiter.success()
         self._cipher = SessionCipher(keys, Role.DEVICE)
@@ -222,13 +225,13 @@ class DeviceSession:
 
     async def _on_command(self, data: bytes) -> None:
         if self._cipher is None:
-            self._end("command before the handshake")
+            self.end("command before the handshake")
             return
         try:
             plaintext = self._cipher.open(decode_envelope(data))
         except (MessageError, EnvelopeError) as exc:
             # Not proven to come from our configurator: could be an attacker (Q6).
-            self._end(f"bad envelope: {exc}")
+            self.end(f"bad envelope: {exc}")
             return
         try:
             command = decode_command(plaintext)
@@ -253,6 +256,7 @@ class DeviceSession:
         result = await self._wifi.connect(command, timeout_s=CONNECT_TIMEOUT_S)
         # The secrets are in NetworkManager now; drop our references (best effort: Python
         # can't wipe memory, but nothing keeps them alive any longer).
+        self.last_result = (command.ssid, result)  # for the LED and [S]; no secrets in it
         del command, plaintext
         await self._report(result)
 
@@ -271,12 +275,13 @@ class DeviceSession:
         self._storage.mark_provisioned()
         self._state.transition(DeviceState.PROVISIONED, reason="wifi connected")
         await self._on_provisioned()  # advertising off before the configurator leaves (D2)
-        self._end("provisioned")
+        self.end("provisioned")
 
     # --- helpers -----------------------------------------------------------------------
 
-    def _end(self, reason: str) -> None:
-        """Forget the session's keys. Never raises: a protocol error must not crash us."""
+    def end(self, reason: str) -> None:
+        """Forget the session's keys. Also called by the service on [R][R] (Q21). Never
+        raises: a protocol error must not crash us."""
         if self.active:
             self._log.info("session_ended", reason=reason)
         else:
@@ -295,7 +300,10 @@ class DeviceSession:
         await self._send_bytes(channel, encode(msg))
 
     async def _send_encrypted(self, msg: StatusMessage) -> None:
-        assert self._cipher is not None
+        if self._cipher is None:
+            # Ended while we were busy (e.g. [R][R] during a scan): nobody to answer.
+            self._log.info("reply_dropped", reason="session ended")
+            return
         await self._send_bytes(Channel.STATUS, encode(self._cipher.seal(encode(msg))))
 
     async def _send_bytes(self, channel: Channel, data: bytes) -> None:

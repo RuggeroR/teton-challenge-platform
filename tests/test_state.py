@@ -115,3 +115,12 @@ def test_a_refused_transition_is_not_logged_as_a_change() -> None:
 def test_start_state_depends_only_on_provisioned(provisioned: bool, state: DeviceState) -> None:
     # A device never starts advertising by itself (plan_v5 D2).
     assert StateMachine.at_start(provisioned).state == state
+
+
+def test_on_change_sees_every_new_state_and_no_refused_one() -> None:
+    seen: list[DeviceState] = []
+    machine = StateMachine.at_start(provisioned=False, on_change=seen.append)
+    machine.transition(S.ADVERTISING, reason="test")
+    with pytest.raises(InvalidTransition):
+        machine.transition(S.PROVISIONED, reason="test")
+    assert seen == [S.ADVERTISING]

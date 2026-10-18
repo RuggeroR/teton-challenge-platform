@@ -9,28 +9,34 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from fake_configurator import (
+    CODE,
+    DEVICE_ID,
+    HOME,
+    WRONG_CODE,
+    Configurator,
+    FakeClock,
+    instant,
+    receive,
+    settle,
+)
 from structlog.testing import capture_logs
 
-from teton_common.crypto import ConfiguratorHandshake, HandshakeError, Role, SessionCipher
-from teton_common.memory_transport import MemoryClientTransport, pair
+from teton_common.crypto import ConfiguratorHandshake, HandshakeError
+from teton_common.memory_transport import pair
 from teton_common.messages import (
     Confirm,
     Envelope,
     Error,
     HandshakeFailed,
     HelloReply,
-    Message,
     NetworkInfo,
     Ready,
     Scan,
     ScanResult,
-    SessionMessage,
     SetCredentials,
     Status,
-    StatusMessage,
-    decode_envelope,
     decode_session,
-    decode_status,
     encode,
 )
 from teton_common.protocol import (
@@ -42,96 +48,11 @@ from teton_common.protocol import (
     Security,
     StatusState,
 )
-from teton_common.transport import FramedTransport, Receiver
+from teton_common.transport import FramedTransport
 from teton_device.session import DeviceSession, HandshakeLimiter
 from teton_device.state import StateMachine
 from teton_device.storage import Storage
 from teton_device.wifi.fake import HOME_PSK_PASSWORD, FakeWifiBackend
-
-DEVICE_ID = "TETON-3F9A2C"
-CODE = "7K2MQX9D4HTRB8WZ"
-WRONG_CODE = "0123456789ABCDEF"
-HOME = SetCredentials(ssid="Home-PSK", security=Security.WPA2_PSK, psk=HOME_PSK_PASSWORD)
-
-
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
-
-
-async def instant(_: float) -> None:
-    pass
-
-
-async def settle() -> None:
-    """Let the memory transport deliver everything that is in flight."""
-    for _ in range(200):
-        await asyncio.sleep(0)
-
-
-async def receive(queue: asyncio.Queue[bytes]) -> bytes:
-    return await asyncio.wait_for(queue.get(), timeout=1)
-
-
-class Configurator:
-    """Just enough of the configurator's half of the protocol to drive the device."""
-
-    def __init__(self, transport: MemoryClientTransport) -> None:
-        self.transport = transport
-        self.framed = FramedTransport(transport)
-        self.session_inbox: asyncio.Queue[bytes] = asyncio.Queue()
-        self.status_inbox: asyncio.Queue[bytes] = asyncio.Queue()
-        self.framed.on_message(Channel.SESSION, self._put(self.session_inbox))
-        self.framed.on_message(Channel.STATUS, self._put(self.status_inbox))
-        self.handshake: ConfiguratorHandshake | None = None
-        self.cipher: SessionCipher | None = None
-
-    @staticmethod
-    def _put(queue: asyncio.Queue[bytes]) -> Receiver:
-        async def put(data: bytes) -> None:
-            queue.put_nowait(data)
-
-        return put
-
-    async def send_session(self, msg: Message) -> None:
-        await self.framed.send_message(Channel.SESSION, encode(msg))
-
-    async def hello(self, code: str = CODE) -> SessionMessage:
-        self.handshake = ConfiguratorHandshake(code)
-        await self.send_session(self.handshake.hello())
-        return decode_session(await receive(self.session_inbox))
-
-    async def establish(self, code: str = CODE) -> StatusMessage:
-        """hello, check the device's tag, confirm; returns the first status (ready)."""
-        reply = await self.hello(code)
-        assert isinstance(reply, HelloReply) and self.handshake is not None
-        confirm, keys = self.handshake.on_hello_reply(reply)
-        self.cipher = SessionCipher(keys, Role.CONFIGURATOR)
-        await self.send_session(confirm)
-        return await self.status()
-
-    async def send_plaintext_command(self, plaintext: bytes) -> None:
-        assert self.cipher is not None
-        envelope = self.cipher.seal(plaintext)
-        await self.framed.send_message(Channel.COMMAND, encode(envelope))
-
-    async def command(self, msg: Message) -> None:
-        await self.send_plaintext_command(encode(msg))
-
-    async def status(self) -> StatusMessage:
-        assert self.cipher is not None
-        envelope = decode_envelope(await receive(self.status_inbox))
-        return decode_status(self.cipher.open(envelope))
-
-    async def assert_silent(self) -> None:
-        await settle()
-        assert self.session_inbox.empty() and self.status_inbox.empty()
 
 
 class Rig:
@@ -506,3 +427,36 @@ async def test_no_secret_in_the_session_logs(rig: Rig) -> None:
     for secret in (HOME_PSK_PASSWORD, CODE, WRONG_CODE, "7K2M-QX9D"):
         assert secret not in text
     assert "connected" in {entry["event"] for entry in logs}
+
+
+async def test_end_during_a_scan_drops_the_reply_without_crashing(tmp_path: Path) -> None:
+    # [R][R] can end the session while a scan is running (Q21).
+    release = asyncio.Event()
+
+    async def slow(_: float) -> None:
+        await release.wait()
+
+    rig = Rig(tmp_path, wifi=FakeWifiBackend(sleep=slow))
+    await rig.start()
+    try:
+        assert await rig.configurator.establish() == Ready()
+        await rig.configurator.command(Scan())
+        await settle()
+        with capture_logs() as logs:
+            rig.session.end("reset")
+            release.set()
+            await rig.configurator.assert_silent()
+        assert "reply_dropped" in {entry["event"] for entry in logs}
+        assert rig.state.state == DeviceState.ADVERTISING
+    finally:
+        await rig.stop()
+
+
+async def test_last_result_keeps_the_ssid_and_outcome(ready: Rig) -> None:
+    await ready.configurator.command(HOME)
+    await ready.configurator.status()
+    await ready.configurator.status()
+    assert ready.session.last_result is not None
+    ssid, result = ready.session.last_result
+    assert ssid == "Home-PSK" and result.ok
+    assert HOME_PSK_PASSWORD not in repr(ready.session.last_result)

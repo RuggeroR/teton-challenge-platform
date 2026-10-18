@@ -412,6 +412,16 @@ def test_messages_and_log_lines_go_above_the_status_line() -> None:
 # --- the terminal key reader ------------------------------------------------------------
 
 
+async def until_single_key_mode(terminal: int) -> None:
+    """Wait until the reader has set cbreak. Keys typed before that are discarded
+    (setcbreak flushes typed-ahead input), so a test must not type earlier."""
+    for _ in range(100):
+        if not termios.tcgetattr(terminal)[3] & termios.ICANON:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the reader never switched to single-key mode")
+
+
 @pytest.fixture
 def pty() -> Iterator[tuple[int, int]]:
     controller, terminal = os.openpty()
@@ -427,7 +437,7 @@ async def test_terminal_buttons_read_single_keys_and_restore_the_terminal(
     before = termios.tcgetattr(terminal)
     presses = aiter(TerminalButtons(terminal))
     first = asyncio.ensure_future(anext(presses))
-    await asyncio.sleep(0)
+    await until_single_key_mode(terminal)
     during = termios.tcgetattr(terminal)
     assert not during[3] & termios.ICANON  # single keys, no Enter needed
     assert not during[3] & termios.ECHO  # keys aren't printed over the status line
@@ -445,7 +455,7 @@ async def test_terminal_buttons_skip_escape_sequences(pty: tuple[int, int]) -> N
     controller, terminal = pty
     presses = aiter(TerminalButtons(terminal))
     nxt = asyncio.ensure_future(anext(presses))
-    await asyncio.sleep(0)
+    await until_single_key_mode(terminal)
     os.write(controller, b"\x1bOPs")  # F1 (ESC O P) is not [P]; the s after it is [S]
     assert await asyncio.wait_for(nxt, 1) == Button.STATUS
     await presses.aclose()
@@ -462,9 +472,11 @@ async def test_terminal_is_restored_after_a_crash(pty: tuple[int, int], rig: Rig
     buttons = ButtonController(
         TerminalButtons(terminal), rig.actions, rig.window, StatusLine(rig.out), rig.clock
     )
+    task = asyncio.create_task(buttons.run())
+    await until_single_key_mode(terminal)
     os.write(controller, b"s")
     with pytest.raises(RuntimeError):
-        await asyncio.wait_for(buttons.run(), 1)
+        await asyncio.wait_for(task, 1)
     assert termios.tcgetattr(terminal) == before  # restored at once, not at garbage collection
 
 

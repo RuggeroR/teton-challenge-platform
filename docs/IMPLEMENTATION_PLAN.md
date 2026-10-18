@@ -388,7 +388,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Goal:** tie the pieces together: the state machine, persistence, the buttons and the pairing window.
 - **Files:** `src/teton_device/service.py`, `tests/test_service.py`.
 - **Content:**
-  - `DeviceService(transport, wifi, storage, buttons, clock)` implements `DeviceActions`:
+  - `DeviceService(transport, wifi, storage, buttons, clock, sleep, status_line)` implements `DeviceActions` (`sleep` drives the 1 s tick in tests; `status_line` is where the code, QR and LED are drawn):
     - `run()` loads state, shows the code + QR, sets `info`, starts the transport **without advertising**, and runs the `ButtonController` and the session together until [Q] or Ctrl+C.
     - `set_advertising(on)` follows the pairing window. When the window closes during a session, the session may finish; when it ends, the state goes to `UNPROVISIONED` (DESIGN §4).
     - `reset()` deletes the `teton-*` profiles through `WifiBackend` (never `nmcli` directly), calls `Storage.reset()`, prints the new code + QR and goes to `UNPROVISIONED` with advertising off.
