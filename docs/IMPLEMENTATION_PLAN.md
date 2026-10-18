@@ -327,6 +327,16 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   If the secret isn't saved, we fall back to `passwd-file`, as your answer to Q9 suggests.
 - **Implements:** SPEC §5.5, §8.1, §8.2.
 
+#### Results (2026-10-18, laptop 1, NetworkManager 1.46)
+
+| # | Check | Result |
+|---|---|---|
+| a | `device show` with `-t -f GENERAL.IP4-CONNECTIVITY,IP4.ADDRESS,IP4.GATEWAY` | ✅ exactly the fixture format (`4 (full)`, `ADDRESS[1]` with `/24`, gateway); fixtures unchanged |
+| b | Secret through stdin (review Q9) | ✅ `set wifi-sec.psk …` / `save` / `quit` piped into `nmcli connection edit` is saved; read back with `nmcli -s -g` |
+| c | A failed `set`/`save` in the editor | ⚠️ exit code **0**, with `Error: Failed to save … property is invalid` in the output. The backend already treats "Error" in the editor output as a failure; the real output is now the fixture `edit-save-failed.txt` |
+| d | What the editor prints | ⚠️ it **echoes every command it reads**, so its output contains the secret. Fixed: `run()` never logs the output of a command fed through stdin; a test checks it |
+| e | Real scan through `NmcliBackend().scan()` | ⏳ not reported yet |
+
 ### Step 2.6: Device session (protocol handler)
 
 - **Goal:** one connection's worth of protocol on the device: handshake, rate limit, encrypted commands, status notifications, idle timeout.

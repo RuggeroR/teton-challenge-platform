@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from teton_common.messages import EapCredentials
 from teton_common.protocol import FailureReason, InternetStatus, Security, StatusWarning
@@ -400,7 +401,7 @@ async def test_activation_timeout_is_timeout(backend: NmcliBackend, runner: Fake
 
 
 async def test_editor_error_counts_as_failure(backend: NmcliBackend, runner: FakeRunner) -> None:
-    runner.on("edit", result=ok("Error: failed to set 'psk' property: invalid"))
+    runner.on("edit", result=ok(fixture("edit-save-failed.txt")))  # real, exit code 0
     result = await backend.connect(psk_creds(), timeout_s=45)
     assert not result.ok
     assert not any(" up " in c for c in runner.commands())  # stopped before activating
@@ -554,6 +555,17 @@ async def test_runner_forces_english_messages() -> None:
 async def test_runner_kills_a_command_that_overruns() -> None:
     result = await run(["sleep", "5"], timeout_s=0.05)
     assert result.timed_out
+
+
+async def test_runner_never_logs_the_output_of_a_command_with_stdin() -> None:
+    # nmcli's editor echoes the `set` line with the secret; here sh echoes stdin to both.
+    script = "set wifi-sec.psk correct-horse-battery\n"
+    with capture_logs() as logs:
+        result = await run(["sh", "-c", "tee /dev/stderr"], timeout_s=5, stdin=script)
+        await run(["sh", "-c", "echo visible >&2"], timeout_s=5)
+    assert PSK in result.stdout and PSK in result.stderr  # the caller still gets it
+    assert PSK not in repr(logs)
+    assert logs[1]["stderr"] == "visible"  # commands without stdin keep their stderr
 
 
 async def test_runner_reports_a_missing_command() -> None:

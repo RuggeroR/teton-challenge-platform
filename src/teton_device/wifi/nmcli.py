@@ -102,13 +102,16 @@ async def run(argv: Sequence[str], timeout_s: float, stdin: str | None = None) -
         err.decode(errors="replace"),
         timed_out,
     )
-    # Raw output goes to the debug log only, never to the configurator (DESIGN §6).
+    # Raw output goes to the debug log only, never to the configurator (DESIGN §6). Not even
+    # there for a command fed through stdin: nmcli's editor echoes every line it reads,
+    # including `set wifi-sec.psk <secret>` (seen on laptop 1 in Step 2.5).
+    output = {"stderr": result.stderr.strip()} if stdin is None else {}
     log.debug(
         "command_done",
         argv=list(argv),
         returncode=result.returncode,
         timed_out=timed_out,
-        stderr=result.stderr.strip(),
+        **output,
     )
     return result
 
