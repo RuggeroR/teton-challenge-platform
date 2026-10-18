@@ -294,6 +294,23 @@ async def test_open_network_gets_unsupported_security(ready: Rig) -> None:
     assert ready.state.state == DeviceState.SESSION_ESTABLISHED
 
 
+async def test_every_error_sent_is_logged_with_its_code(ready: Rig) -> None:
+    """Review Q56: a device's log says what it refused, under the never-redacted `code`."""
+    with capture_logs() as logs:
+        await ready.configurator.command(SetCredentials(ssid="Cafe", security=Security.OPEN))
+        await ready.configurator.status()
+        await ready.configurator.send_plaintext_command(b'{"type": "scan", "extra": 1}')
+        await ready.configurator.status()
+        for _ in range(5):
+            ready.limiter.attempt()
+        await ready.configurator.hello()
+    assert [e["code"] for e in logs if "code" in e] == [
+        ErrorCode.UNSUPPORTED_SECURITY,
+        ErrorCode.BAD_REQUEST,
+        ErrorCode.RATE_LIMITED,
+    ]
+
+
 # --- protocol violations end the session (Q6) -------------------------------------------
 
 

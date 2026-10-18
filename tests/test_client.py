@@ -3,16 +3,24 @@
 # The client's own waits are real seconds, so they are set to fractions of a second here.
 
 import asyncio
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from fake_configurator import CODE, DEVICE_ID, HOME, WRONG_CODE, WRONG_PSK, Device, settle
+from fake_configurator import (
+    CODE,
+    DEVICE_ID,
+    HOME,
+    NO_REPLY_S,
+    WAIT_S,
+    WRONG_CODE,
+    WRONG_PSK,
+    Device,
+    Wire,
+    settle,
+)
 from structlog.testing import capture_logs
 
-from teton_common.framing import Reassembler
-from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport
-from teton_common.messages import Info, SetCredentials, Status, decode_session, encode
+from teton_common.messages import Info, SetCredentials, Status, encode
 from teton_common.protocol import (
     Channel,
     DeviceState,
@@ -33,40 +41,6 @@ from teton_configurator.client import (
 )
 from teton_device.buttons import Button
 from teton_device.wifi.fake import HOME_PSK_PASSWORD, FakeWifiBackend
-
-WAIT_S = 0.5  # an answer that should come arrives within a few loop turns
-NO_REPLY_S = 0.05  # for the cases where nothing comes
-
-
-class Wire(MemoryClientTransport):
-    """The client end of the memory transport, recording every chunk the client sends."""
-
-    def __init__(self, device: MemoryDeviceTransport) -> None:
-        super().__init__(device)
-        self.sent: list[tuple[Channel, bytes]] = []
-
-    async def send(self, channel: Channel, data: bytes) -> None:
-        self.sent.append((channel, data))
-        await super().send(channel, data)
-
-    def messages(self, channel: Channel) -> list[bytes]:
-        """The whole messages sent on `channel`, reassembled from the chunks."""
-        reassembler, out = Reassembler(), []
-        for ch, chunk in self.sent:
-            if ch == channel and (msg := reassembler.feed(chunk)) is not None:
-                out.append(msg)
-        return out
-
-    def session_types(self) -> list[str]:
-        return [decode_session(m).TYPE for m in self.messages(Channel.SESSION)]
-
-
-@pytest.fixture
-async def device(tmp_path: Path) -> AsyncIterator[Device]:
-    d = Device(tmp_path)
-    await d.start()
-    yield d
-    await d.stop()
 
 
 async def connect(d: Device, wait_s: float = WAIT_S) -> tuple[ProvisioningClient, Wire]:

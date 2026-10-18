@@ -112,7 +112,7 @@ ct    = AES-256-GCM(k_dir, nonce, plaintext_json, aad)
 
 ### 5.5 Secret hygiene
 
-- Passwords, PSKs, the setup code and keys are **never logged**. Log redaction applies to the keys `psk`, `password`, `setup_code`, `confirm`, `pub`, `ct` and `ca_cert_pem`, and a test enforces this. The setup code is only ever stored and logged under `setup_code`, and the QR payload is never logged. The key `code` is **not** redacted, because error messages use it (error codes such as `bad_request` must stay visible in logs).
+- Passwords, PSKs, the setup code and keys are **never logged**. Log redaction applies to the keys `psk`, `password`, `setup_code`, `confirm`, `pub`, `ct` and `ca_cert_pem`, and a test enforces this. The setup code is only ever stored and logged under `setup_code`, and the QR payload is never logged. The key `code` is **not** redacted, because error messages use it (error codes such as `bad_request` must stay visible in logs). The device logs every `error` it sends with its `code` (review Q56).
 - Secrets **never appear on a command line**, where any local user could read them (`ps`, `/proc/<pid>/cmdline`). Every subprocess goes through one runner, and secrets reach `nmcli` through stdin only (§8). A test with a fake runner asserts that no secret appears in any argv.
 - Credentials are passed to NetworkManager and then dropped from memory (best effort in Python).
 - NetworkManager stores the profile in `/etc/NetworkManager/system-connections/` (root, `0600`).

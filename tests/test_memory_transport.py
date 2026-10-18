@@ -2,7 +2,6 @@
 # connection rules, BLE channel directions and chunk size, close.
 
 import asyncio
-from collections.abc import AsyncIterator
 
 import pytest
 
@@ -30,16 +29,6 @@ async def settle() -> None:
     """Let the background delivery tasks run."""
     for _ in range(10):
         await asyncio.sleep(0)
-
-
-@pytest.fixture
-async def ends() -> AsyncIterator[Ends]:
-    device, client = pair()
-    await device.start()
-    await device.set_advertising(True)
-    yield device, client
-    await client.close()
-    await device.close()
 
 
 async def test_read_info_returns_what_the_device_set(ends: Ends) -> None:

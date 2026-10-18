@@ -2,11 +2,8 @@
 # reset and recovery from framing errors.
 
 import asyncio
-from collections.abc import AsyncIterator
 
-import pytest
-
-from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport, pair
+from teton_common.memory_transport import MemoryClientTransport, MemoryDeviceTransport
 from teton_common.protocol import CHUNK_SIZE_BYTES, Channel
 from teton_common.transport import FramedTransport, Receiver
 
@@ -37,16 +34,6 @@ class ChunkSpy:
     async def send(self, channel: Channel, data: bytes) -> None:
         self.sent.append(data)
         await self.inner.send(channel, data)
-
-
-@pytest.fixture
-async def ends() -> AsyncIterator[Ends]:
-    device, client = pair()
-    await device.start()
-    await device.set_advertising(True)
-    yield device, client
-    await client.close()
-    await device.close()
 
 
 async def test_message_is_chunked_and_reassembled(ends: Ends) -> None:
