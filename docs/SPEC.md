@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.5, 2026-10-18. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code); 1.5 applies the Phase 3 review decisions so far (Q26: `auth_failed` text; Q27, Q28: configurator-side failures and input checks; Q30: network list markers). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -156,7 +156,7 @@ There is no reset command over BLE. Reset is the physical [R] button only (decis
 |---|---|---|
 | `wrong_password` | `nmcli` reports secrets required / 4-way handshake failure | "The Wi-Fi password was not accepted. Check it and try again." |
 | `ssid_not_found` | `nmcli` "No network with SSID" | "The device can't see this network. Move closer or check the name." |
-| `auth_failed` | 802.1X failure on Enterprise | "The username or password was rejected by the network." |
+| `auth_failed` | 802.1X failure on Enterprise | "The username or password was rejected by the network. Check them and try again." |
 | `no_ip` | activated, but no IPv4 address within the timeout | "Connected to Wi-Fi but the network gave no address. Contact IT." |
 | `captive_portal` | NM connectivity of the Wi-Fi interface = `portal` | "This network needs a login page; devices can't use it. Contact IT." |
 | `no_internet` | NM connectivity is not `full` and the gateway does not answer a ping on the Wi-Fi interface | "Connected, but there is no internet access. Contact IT." |
@@ -217,9 +217,11 @@ A guided flow with numbered choices and no flags needed:
 1. Tell the technician to press the pairing button on the device, then scan for devices for 10 s and list them (`Teton-9A2C`, signal). If none is found: "No device found. Press the pairing button on the device and try again."
 2. Ask for the setup code ("printed on the device label").
 3. Run the handshake (§5.1). On failure, explain and offer to retype the code.
-4. Ask the device to scan, then show its networks (name, signal bars, lock icon or "enterprise") plus "Other (hidden) network".
+4. Ask the device to scan, then show its networks (name, four-level signal bars `▂▄▆█`, and "password" or "enterprise"; review Q30) plus "Other (hidden) network".
 5. Ask for credentials based on security: password, or username + password + optional CA file path + optional server domain.
 6. Show progress, then success ("Connected. IP 192.168.1.23, internet OK") or the plain-language failure with an option to retry from step 4 or 5.
+
+Every text the technician sees lives in `teton_configurator/ui_text.py` and is one sentence plus a next action. Besides the device's reasons (§7) and error codes (§6.3), the configurator has texts for what it finds itself (review Q27): a wrong code or wrong device, no reply to `hello` (the pairing window is closed, §5.4), no result within 70 s (different from `timeout`: the device always finishes and may have connected, so the text points at its light), a lost connection, and an unexpected reply. It checks input before sending anything (review Q28): the setup code format (a mistyped code sends no `hello`, so it isn't counted by the rate limit), a password of 8–63 characters, a network name of 1–32 bytes, and a non-empty username and password.
 
 `--simulate` connects to the simulated device instead of BLE.
 

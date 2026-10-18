@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 5, 2026-10-14. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"). If this plan disagrees with those documents, they win.
+Version 6, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -410,9 +410,10 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 - **Goal:** every message the technician can see, in one file: one sentence plus a next action.
 - **Files:** `src/teton_configurator/ui_text.py`, `tests/test_ui_text.py`.
-- **Content:** the prompts, the progress lines, `failure_text(reason)` with the SPEC §7 texts, error-code texts (`unsupported_security`, `bad_request`, rate-limited), wrong code / wrong device, "press the pairing button on the device", and "No device found. Press the pairing button on the device and try again."
-- **Tests:** every `FailureReason` and `ErrorCode` has a text (so a newly added enum value fails the test until it gets one); no text contains jargon such as "nmcli", "GATT" or "exception".
+- **Content:** the prompts SPEC §9.2 fixes, the progress lines, `failure_text(reason)` with the SPEC §7 texts, `error_text(code)` (`unsupported_security`, `bad_request`, rate-limited with the seconds to wait), `warning_text(warning)`, the connected line, the five configurator-side failures (wrong code / wrong device, no reply, no result within 70 s, connection lost, unexpected reply; Q27), the input-check texts (Q28), "press the pairing button on the device", "No device found. Press the pairing button on the device and try again.", and the network list markers (Q30). Prompts for options decided in Step 3.3 are added there (Q25).
+- **Tests:** every `FailureReason`, `ErrorCode` and `StatusWarning` has a text (so a newly added enum value fails the test until it gets one); no text contains jargon (nmcli, GATT, BLE, exception, traceback, D-Bus), matched on word boundaries; every failure text has a next action after its first sentence; the signal bars and markers.
 - **Verify:** `pytest tests/test_ui_text.py -v`
+- **Decided:** Q25 (scope of 3.1), Q26 (`auth_failed` next action), Q27 (configurator-side failures), Q28 (local input checks), Q29 (`StatusWarning` covered too), Q30 (bars and words, no lock emoji).
 - **Implements:** SPEC §7, §9.2. CLAUDE.md "plain language".
 
 ### Step 3.2: Protocol client
@@ -703,6 +704,12 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q21 | [R][R] outside `PROVISIONED` | Every state except `CONNECTING` ("Busy connecting. Try again in a moment."); closes the window, drops any session, rotates the code; no new transitions (2026-10-18, SPEC §9.1, DESIGN §4) |
 | Q23 | No terminal; the QR scrolling away | No terminal → a warning, no buttons, the device stays on; no `SIGUSR1`. [S] prints the code + QR again (2026-10-18, SPEC §9.1, DESIGN §4.1) |
 | Q24 | Deleting the Teton profiles on reset | `WifiBackend.forget_all()` deletes every `teton-*` profile, so it works after a restart (2026-10-14, raised in Step 2.3; DESIGN §5, SPEC §9.1) |
+| Q25 | What `ui_text.py` holds in Step 3.1 | Every failure, warning and result text plus the prompts SPEC §9.2 fixes; prompts for Step 3.3 options are added in 3.3 (2026-10-18) |
+| Q26 | `auth_failed` had no next action | "…rejected by the network. Check them and try again." (2026-10-18, SPEC §7) |
+| Q27 | Failures the configurator finds itself | Texts for wrong code / wrong device, no reply to `hello`, no result within 70 s (not the `timeout` text: points at the device's light), connection lost, unexpected reply (2026-10-18, SPEC §9.2) |
+| Q28 | Checking input before sending | Local checks of code format, password length, network name length, non-empty username/password; no exception text shown; a mistyped code sends no `hello` (2026-10-18, SPEC §9.2) |
+| Q29 | Scope of the text test | Also every `StatusWarning`; jargon list unchanged, matched on word boundaries (2026-10-18) |
+| Q30 | Network list markers | Bars `▂▄▆█` (≥75 / ≥50 / ≥25 / below) and "password" / "enterprise", no lock emoji (2026-10-18, SPEC §9.2) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

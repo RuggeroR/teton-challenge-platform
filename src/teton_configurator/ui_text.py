@@ -1,2 +1,172 @@
 # Plain-language strings shown to the technician, incl. failure reason -> message + next action.
-# See SPEC §7.
+# See SPEC §7, §9.2.
+#
+# Every text the technician sees lives here, nowhere else (CLAUDE.md). A failure is one
+# sentence saying what happened plus a next action. Exception texts are never shown: the
+# flow catches typed errors and picks a text from this module (review Q28).
+# Step 3.3 adds the prompts of the options it decides (menus, rescan, hidden network; Q25).
+
+from teton_common.messages import NetworkInfo
+from teton_common.protocol import (
+    ErrorCode,
+    FailureReason,
+    InternetStatus,
+    Security,
+    StatusWarning,
+)
+
+# ---------------------------------------------------------------------------
+# The steps of SPEC §9.2
+
+PRESS_PAIRING_BUTTON = "Press the pairing button on the device. Its light starts blinking blue."
+LOOKING_FOR_DEVICES = "Looking for devices..."
+NO_DEVICE_FOUND = "No device found. Press the pairing button on the device and try again."
+ASK_SETUP_CODE = "Setup code (printed on the device label): "
+CHECKING_CODE = "Checking the setup code..."
+CODE_ACCEPTED = "Setup code accepted."
+LOOKING_FOR_NETWORKS = "The device is looking for Wi-Fi networks..."
+OTHER_NETWORK = "Other (hidden) network"
+ASK_NETWORK_NAME = "Network name: "
+ASK_PASSWORD = "Wi-Fi password: "
+ASK_USERNAME = "Username: "
+ASK_CA_FILE = "Certificate file from IT (optional, press Enter to skip): "
+ASK_DOMAIN = "Server domain from IT (optional, press Enter to skip): "
+
+
+def connecting_text(ssid: str) -> str:
+    return f"Connecting the device to {ssid}. This can take up to a minute..."
+
+
+def connected_text(ip: str, internet: InternetStatus) -> str:
+    """SPEC §9.2: "Connected. IP 192.168.1.23, internet OK". Anything less than `full` comes
+    with the limited_internet warning, which explains it."""
+    if internet == InternetStatus.FULL:
+        return f"Connected. IP {ip}, internet OK."
+    return f"Connected. IP {ip}, internet not confirmed."
+
+
+# ---------------------------------------------------------------------------
+# Failures reported by the device (SPEC §7)
+
+_FAILURES: dict[FailureReason, str] = {
+    FailureReason.WRONG_PASSWORD: "The Wi-Fi password was not accepted. Check it and try again.",
+    FailureReason.SSID_NOT_FOUND: (
+        "The device can't see this network. Move closer or check the name."
+    ),
+    FailureReason.AUTH_FAILED: (
+        "The username or password was rejected by the network. Check them and try again."
+    ),
+    FailureReason.NO_IP: "Connected to Wi-Fi but the network gave no address. Contact IT.",
+    FailureReason.CAPTIVE_PORTAL: (
+        "This network needs a login page; devices can't use it. Contact IT."
+    ),
+    FailureReason.NO_INTERNET: "Connected, but there is no internet access. Contact IT.",
+    FailureReason.TIMEOUT: "Connecting took too long. Try again.",
+}
+
+
+def failure_text(reason: FailureReason) -> str:
+    return _FAILURES[reason]
+
+
+# ---------------------------------------------------------------------------
+# Error codes from the device (SPEC §6.3)
+
+_ERRORS: dict[ErrorCode, str] = {
+    # The configurator checks input before sending (Q28), so this only happens on a bug.
+    ErrorCode.BAD_REQUEST: (
+        "The device refused the request. Start again, and if it happens again contact support."
+    ),
+    ErrorCode.UNSUPPORTED_SECURITY: (
+        "The device can't join this type of network. Pick another network or contact IT."
+    ),
+    ErrorCode.RATE_LIMITED: (
+        "Too many attempts with a wrong setup code. Wait {seconds}, then type the code again."
+    ),
+}
+
+
+def error_text(code: ErrorCode, retry_after_s: int | None = None) -> str:
+    """`retry_after_s` comes with rate_limited only (review Q5)."""
+    return _ERRORS[code].format(seconds=_seconds(retry_after_s or 0))
+
+
+def _seconds(n: int) -> str:
+    return "1 second" if n == 1 else f"{n} seconds"
+
+
+# ---------------------------------------------------------------------------
+# Warnings on a successful connection (SPEC §6.3)
+
+_WARNINGS: dict[StatusWarning, str] = {
+    StatusWarning.SERVER_NOT_VERIFIED: (
+        "Warning: the device couldn't check that this is the real network, because no "
+        "certificate file or server domain was given. Ask IT for them to make the setup safer."
+    ),
+    StatusWarning.LIMITED_INTERNET: (
+        "Warning: the device joined the network but can't reach the internet. This may be "
+        "normal on restricted networks; contact IT if the device stays offline."
+    ),
+}
+
+
+def warning_text(warning: StatusWarning) -> str:
+    return _WARNINGS[warning]
+
+
+# ---------------------------------------------------------------------------
+# Failures the configurator finds itself (review Q27)
+
+WRONG_CODE = (
+    "The setup code is wrong, or this is not the right device. "
+    "Check the code on the device label and type it again."
+)
+# Q22: a hello outside the pairing window gets no reply at all.
+NO_REPLY = "The device didn't answer. Press the pairing button on the device and try again."
+# Not the `timeout` text: the device always finishes its attempt and may have connected.
+RESULT_TIMEOUT = (
+    "The device didn't report back in time. If its light is green it is connected; "
+    "otherwise press the pairing button on the device and start again."
+)
+CONNECTION_LOST = (
+    "The connection to the device was lost. "
+    "Move closer, press the pairing button on the device and start again."
+)
+UNEXPECTED_REPLY = (
+    "The device answered in a way this configurator doesn't understand. "
+    "Update the configurator and start again."
+)
+
+# ---------------------------------------------------------------------------
+# Input checks before anything is sent (review Q28)
+
+INVALID_CODE = (
+    "A setup code has 16 letters and digits, like 7K2M-QX9D-4HTR-B8WZ. "
+    "Check the label and type it again."
+)
+INVALID_PASSWORD_LENGTH = "A Wi-Fi password has 8 to 63 characters. Check it and type it again."
+# The limit is 32 bytes; "characters" is right for the plain-ASCII names most networks use.
+INVALID_NETWORK_NAME = "A network name has 1 to 32 characters. Check it and type it again."
+REQUIRED = "This can't be empty. Type it again."
+
+# ---------------------------------------------------------------------------
+# The network list (review Q30)
+
+_BARS = "▂▄▆█"
+
+_SECURITY_LABELS: dict[Security, str] = {
+    Security.WPA2_PSK: "password",
+    Security.WPA3_SAE: "password",
+    Security.WPA2_EAP_PEAP: "enterprise",
+}  # one per entry of CAPS; open is never in a scan list (review Q11)
+
+
+def signal_bars(signal: int) -> str:
+    """0-100 -> 1 to 4 bars, padded to the same width so the list lines up."""
+    count = 4 if signal >= 75 else 3 if signal >= 50 else 2 if signal >= 25 else 1
+    return _BARS[:count].ljust(len(_BARS))
+
+
+def network_label(net: NetworkInfo) -> str:
+    """e.g. "Home-PSK  ▂▄▆█  password"."""
+    return f"{net.ssid}  {signal_bars(net.signal)}  {_SECURITY_LABELS[net.security]}"

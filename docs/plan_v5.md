@@ -1,8 +1,21 @@
 # Teton Challenge: plan v5
 
-v5, 2026-10-11, amended 2026-10-13 and 2026-10-14. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phase 2; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
+v5, 2026-10-11, amended 2026-10-13, 2026-10-14 and 2026-10-18. Earlier versions (v1 to v3) live in the project notes, and v4 is kept in `plan_v4.md`. Their changes are summarised in the changelog below. **Status: v4 corrected by the first spec review, simplified after the BLE spike (S1–S4), then amended with the platform split and the device buttons (D1, D2), and with the review questions that block Phases 2 and 3; open review questions are tracked in `IMPLEMENTATION_PLAN.md`.**
 
 ## Changelog
+
+### v5 additions: Phase 3 review questions (2026-10-18)
+
+Decided before building the configurator (`IMPLEMENTATION_PLAN.md` Phase 3), one step at a time.
+
+| Area | Before | v5 (decision) | Decided by |
+|---|---|---|---|
+| What `ui_text.py` holds first (review Q25) | Step 3.1 had "the prompts", but several prompts depend on flow choices not made yet | **Step 3.1 holds every failure, warning and result text, plus the prompts SPEC §9.2 already fixes.** Prompts for options decided in Step 3.3 (menus, rescan, the hidden-network security choice) are added then, under the same tests | Ruggero (proposed by Claude) |
+| `auth_failed` text (review Q26) | "The username or password was rejected by the network." (no next action) | **"The username or password was rejected by the network. Check them and try again."** Every failure text is one sentence plus a next action | Ruggero (proposed by Claude) |
+| Failures the configurator finds itself (review Q27) | Only the device's reasons and error codes had texts | **Five configurator-side texts:** wrong code or wrong device; no reply to `hello` (Q22: "Press the pairing button on the device and try again"); no result within 70 s (Q10), which is **not** the `timeout` text, because the device always finishes its attempt and may have connected, so it points at the device's light; connection lost; an unexpected reply (bad message, version or `device_id` mismatch) | Ruggero (proposed by Claude) |
+| Checking input before sending (review Q28) | Not specified; a bad value would come back as `bad_request` | **The configurator checks input locally** (setup code format, password 8–63 characters, network name 1–32 bytes, non-empty username and password) and shows a ui_text sentence, never exception text. A mistyped code sends no `hello`, so it doesn't count against the rate limit. `bad_request` is then only a bug, with its own "contact support" text | Ruggero (proposed by Claude) |
+| Text coverage test (review Q29) | Every `FailureReason` and `ErrorCode` has a text; no jargon | **Also every `StatusWarning`.** The jargon list stays as it is (nmcli, GATT, BLE, exception, traceback, D-Bus), matched case-insensitively on word boundaries so "BLE" doesn't match "unable" | Ruggero |
+| Network list markers (review Q30) | "signal bars, lock icon or 'enterprise'" | **Four-level bars from block characters (`▂▄▆█`: ≥75 / ≥50 / ≥25 / below) and the words "password" or "enterprise"** instead of a lock emoji, which has an uneven width in terminals and is missing from some fonts | Ruggero (proposed by Claude) |
 
 ### v5 additions: Phase 2 review questions (2026-10-14)
 
