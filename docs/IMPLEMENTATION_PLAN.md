@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 7, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions"). If this plan disagrees with those documents, they win.
+Version 7, 2026-10-18. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -464,7 +464,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Files:** `tests/test_end_to_end.py`, `tests/test_no_secrets_in_logs.py`, `tests/conftest.py` (shared fixtures: `device`, `paired_device`, `ends`, `state_dir`, `log_stream`; the classes stay in `tests/fake_configurator.py`, Q48, Q49).
 - **Tests:**
   - **End to end (4.1a):** the real `DeviceService` and the real `run_flow` with scripted answers. Each test checks the `ui_text` the technician saw and the device's state and LED. PSK success (advertising off, the service still running); wrong password, then a retry in the same session; wrong code, then retype, with no command on the wire before the good code; captive portal (back to `SESSION_ESTABLISHED`, red LED); limited internet; PEAP with a CA (no warning) and without CA or domain (`server_not_verified`); a really hidden network (Q53); a second `hello` from a new configurator restarting the session (Q52); the rate limit, then success after the fake clock moves on; the window expiring before `hello` (no reply), then [P] again; after success no device is found (Q51), then [R][R] + [P] and the new code works. Each run starts with an injected [P].
-  - **No secrets in logs:** a full simulated run, including a wrong password and a wrong code, with logging captured at DEBUG. The test asserts that none of the PSK, the EAP password, the setup code (raw or formatted), the session keys or the base64 ciphertext appears anywhere in the output.
+  - **No secrets in logs (4.1b, lean, Q56–Q62):** one run through the real `configure_logging(verbose=True)` (not `capture_logs`, which skips the redaction): a wrong code, the code typed lowercase with dashes, a wrong password, then PEAP with a CA file, which connects; plus `NmcliBackend` attempts through the real `run()` with an echoing stand-in (Q61). None of the PSKs, the EAP password, the setup code (raw, dashed, lowercase), the X25519 private keys and session keys (hex and base64, caught by spies in `crypto`, Q58), the base64 ciphertexts or the CA PEM lines (Q59) appears in the logs, stdout, stderr or the configurator's output; the device's screen may show only the code (Q60). The SSIDs, `identity`, `device_id` and the failure reason stay visible (Q62). The device logs every error it sends with its `code` (Q56, a session test).
 - **Verify:** `pytest tests/test_end_to_end.py tests/test_no_secrets_in_logs.py -v`
 - **Implements:** SPEC §12 MUST #6 (unit tests list complete). DESIGN §7 (end to end, `log`).
 
@@ -556,7 +556,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
      - **wrong setup code:** a clear message, and nothing else is sent;
      - **wrong hotspot password:** `wrong_password`, then a retry in the same session;
      - **correct password:** "Connected, IP …, internet OK".
-  5. Check the capture: `btmon -r docs/evidence/run-psk.btsnoop | grep -c "<hotspot password>"` gives `0`. Also grep for the SSID; the SSID travels encrypted too, so it should also be 0.
+  5. Check the capture: `btmon -r docs/evidence/run-psk.btsnoop | grep -c "<hotspot password>"` gives `0`. Also grep for the SSID; the SSID travels encrypted too, so it should also be 0. Then, before committing anything, grep both `.log` files for the hotspot password and the setup code, raw and with dashes (`grep -ci`): all must give `0` (review Q63).
   6. Take screenshots of both terminals.
   7. Record `nmcli` outputs for the fixtures: the wrong-password and unknown-SSID errors, and the scan output.
   8. On laptop A afterwards: press [R] twice to delete the Teton profile and rejoin your normal Wi-Fi, then [Q].
@@ -739,6 +739,14 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q53 | Hidden network | Test-only `HiddenWifi`: a network left out of the scan, joined by name (2026-10-18) |
 | Q54 | No real sleeps | Client waits stay real: 0.5 s, and 0.05 s only for no reply; no production change (2026-10-18) |
 | Q55 | Overlap with `test_flow` | Both stay: end to end adds the device side and multi-run scenarios (2026-10-18) |
+| Q56 | Error codes in the device's log | Every `error` sent is logged with `code=`: `hello_refused` (rate limited), `command_refused` (bad_request, unsupported_security). The one production change of Phase 4 (2026-10-18, SPEC §5.5, DESIGN §6) |
+| Q57 | What the log test runs | Lean: one flow with a wrong code, a dashed lowercase code, a wrong password, PEAP + CA success; unique secret values; no bad-request or rate-limit step (2026-10-18) |
+| Q58 | Keys without logging them | `monkeypatch` spies on `crypto._new_key`, `_derive`, `SessionCipher.seal`; they must catch something (2026-10-18) |
+| Q59 | CA PEM body | Checked line by line (2026-10-18) |
+| Q60 | Where the setup code may appear | Only on the device's screen; never in logs, stdout, stderr or the configurator's output (2026-10-18) |
+| Q61 | The nmcli path | `FakeRunner` in `tests/fake_nmcli.py`; the log test also runs the real `run()` with an echoing `sh` stand-in (2026-10-18) |
+| Q62 | Not hiding too much | SSIDs, `identity`, `device_id`, the failure reason and DEBUG lines asserted visible; `code` via the session test and `test_log` (2026-10-18) |
+| Q63 | Real evidence | Step 6.3 also greps the run logs for the hotspot password and the setup code before committing (2026-10-18) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

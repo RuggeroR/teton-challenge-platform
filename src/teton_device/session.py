@@ -8,6 +8,7 @@
 #   Q5   a rate-limited hello gets error rate_limited + retry_after_s
 #   Q6   fails before decryption -> end the session; invalid after decryption -> bad_request
 #   Q22  a hello is accepted only while the pairing window is open
+#   Q56  every error the device sends is logged with its code (`code` is never redacted)
 
 import asyncio
 import math
@@ -178,7 +179,12 @@ class DeviceSession:
             return
         wait = self._limiter.retry_after_s()
         if wait:
-            log.warning("hello_refused", reason="rate limited", retry_after_s=wait)
+            log.warning(
+                "hello_refused",
+                reason="rate limited",
+                code=ErrorCode.RATE_LIMITED,
+                retry_after_s=wait,
+            )
             await self._send(Channel.SESSION, Error(ErrorCode.RATE_LIMITED, retry_after_s=wait))
             return
         if self.active:
@@ -237,8 +243,7 @@ class DeviceSession:
             command = decode_command(plaintext)
         except MessageError as exc:
             # Authenticated, so it's a configurator bug, not an attack: say so, keep going.
-            self._log.warning("bad_request", reason=str(exc))
-            await self._send_encrypted(Error(ErrorCode.BAD_REQUEST))
+            await self._refuse(ErrorCode.BAD_REQUEST, reason=str(exc))
             return
 
         if isinstance(command, Scan):
@@ -248,7 +253,7 @@ class DeviceSession:
             return
 
         if command.security not in CAPS:
-            await self._send_encrypted(Error(ErrorCode.UNSUPPORTED_SECURITY))
+            await self._refuse(ErrorCode.UNSUPPORTED_SECURITY, reason=str(command.security))
             return
         self._state.transition(DeviceState.CONNECTING, reason="set_credentials")
         await self._send_encrypted(Status(StatusState.CONNECTING))
@@ -295,6 +300,12 @@ class DeviceSession:
             # DESIGN §4: back to advertising, or to unprovisioned once the window expired.
             to = DeviceState.ADVERTISING if self._window_open() else DeviceState.UNPROVISIONED
             self._state.transition(to, reason=f"session ended: {reason}")
+
+    async def _refuse(self, code: ErrorCode, reason: str) -> None:
+        """Answer a command with an error, and log which one (review Q56). The reason names
+        a field or a security type, never a value the configurator sent."""
+        self._log.warning("command_refused", code=code, reason=reason)
+        await self._send_encrypted(Error(code))
 
     async def _send(self, channel: Channel, msg: SessionMessage | StatusMessage) -> None:
         await self._send_bytes(channel, encode(msg))
