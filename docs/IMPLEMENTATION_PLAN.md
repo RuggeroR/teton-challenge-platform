@@ -335,7 +335,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 | b | Secret through stdin (review Q9) | ✅ `set wifi-sec.psk …` / `save` / `quit` piped into `nmcli connection edit` is saved; read back with `nmcli -s -g` |
 | c | A failed `set`/`save` in the editor | ⚠️ exit code **0**, with `Error: Failed to save … property is invalid` in the output. The backend already treats "Error" in the editor output as a failure; the real output is now the fixture `edit-save-failed.txt` |
 | d | What the editor prints | ⚠️ it **echoes every command it reads**, so its output contains the secret. Fixed: `run()` never logs the output of a command fed through stdin; a test checks it |
-| e | Real scan through `NmcliBackend().scan()` | ⏳ not reported yet |
+| e | Real scan through `NmcliBackend().scan()` | ✅ nearby networks, strongest first, no duplicates |
 
 ### Step 2.6: Device session (protocol handler)
 
@@ -380,7 +380,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - LED priority for each combination; `StatusLine` writes escape codes only to a terminal.
   - `TerminalButtons` restores the terminal settings, tested on a pseudo-terminal (`os.openpty`), so no real keyboard is needed.
 - **Verify:** `pytest tests/test_buttons.py -v`. You try the real keys in Step 5.2.
-- **Depends on:** Q21 (reset outside `PROVISIONED`), Q23 (no terminal, the QR scrolling away).
+- **Decided:** Q21 (reset in every state except `CONNECTING`), Q23 (no terminal: warning, no buttons, no `SIGUSR1`; [S] prints the code + QR again).
 - **Implements:** SPEC §9.1 (buttons, LED). DESIGN §4.1, §5 (`ButtonSource`, `DeviceActions`).
 
 ### Step 2.8: Device service (orchestrator)
@@ -399,7 +399,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - Transport errors never crash the service. Power off closes the transport and restores the terminal.
 - **Tests (memory transport, `QueueButtons`, fake clock):** nothing is advertised before [P]; the happy path after [P] ends `PROVISIONED` with advertising off and the service still running; a provisioned state doesn't advertise, even after [P]; a session survives window expiry and the device returns to `UNPROVISIONED` when it ends; a second `hello` mid-session starts a new session; a failed attempt rolls back and the session stays usable; [R][R] calls `forget_all`, rotates the code and leaves advertising off; [Q] closes the transport.
 - **Verify:** `pytest tests/test_service.py -v`
-- **Depends on:** Q21. (Q22 decided.)
+- **Decided:** Q21, Q22.
 - **Implements:** SPEC §4, §5.4, §8.5, §8.6, §9.1. DESIGN §4, §6.
 
 ---
@@ -700,6 +700,8 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q10 | Timeout budget | 45 s activation (`--wait 45`) + 15 s verification; the configurator waits 70 s (2026-10-14, SPEC §7, §8.3; `protocol.py`) |
 | Q11 | Security types | `open` out of scope (`unsupported_security`); `WPA2 WPA3` → `wpa2-psk`, `WPA3` → `wpa3-sae`, `WPA2 802.1X` → `wpa2-eap-peap`; unjoinable networks left out of the scan list (2026-10-14, SPEC §6.2, §6.3, §8.1) |
 | Q17 | Autoconnect priority | `connection.autoconnect-priority 10`; autoconnect off until success (2026-10-14, SPEC §8.2) |
+| Q21 | [R][R] outside `PROVISIONED` | Every state except `CONNECTING` ("Busy connecting. Try again in a moment."); closes the window, drops any session, rotates the code; no new transitions (2026-10-18, SPEC §9.1, DESIGN §4) |
+| Q23 | No terminal; the QR scrolling away | No terminal → a warning, no buttons, the device stays on; no `SIGUSR1`. [S] prints the code + QR again (2026-10-18, SPEC §9.1, DESIGN §4.1) |
 | Q24 | Deleting the Teton profiles on reset | `WifiBackend.forget_all()` deletes every `teton-*` profile, so it works after a restart (2026-10-14, raised in Step 2.3; DESIGN §5, SPEC §9.1) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
@@ -713,11 +715,3 @@ These are the questions still open after the first review and the spike. Each on
 ### Gaps (the docs don't say)
 
 **Q16. CI earlier? (minor).** CI is SHOULD (Step 7.1) but takes about 15 minutes, and it would guard every PR from Phase 1 on. *Proposal:* move it to right after Step 0.2 (the spike). Otherwise it stays in Phase 7.
-
-### Raised by the device buttons (D2, 2026-10-13)
-
-**Q21. [R][R] outside `PROVISIONED` (blocks 2.7, 2.8).** D2 defines reset from `PROVISIONED` only. A technician could also press it while unprovisioned, with the window open, or mid-session. *Proposal:* allow it in every state except `CONNECTING`, where it shows "Busy connecting. Try again in a moment." (a started attempt always finishes, DESIGN §4). Elsewhere it closes the window, drops any session and rotates the code, which is also how a technician would replace a code they think has leaked.
-
-**Q23. No terminal, and the QR scrolling away (blocks 2.7; 7.3).**
-- Under systemd (Step 7.3) or with stdin redirected there is no terminal, so no buttons, and the device would never advertise. *Proposal:* `TerminalButtons` logs a warning and stays off. The unit file stays a hardening example, and the writeup says a real device uses GPIO buttons. A cheap option is mapping `SIGUSR1` to [P] (`systemctl kill -s USR1 teton-device`); say if you want it.
-- With `show-code` gone, the code + QR are printed only on start and after a reset, so log lines scroll them away. *Proposal:* [S] also prints the code + QR again under the status. The code is on screen by design anyway (it stands in for the label).

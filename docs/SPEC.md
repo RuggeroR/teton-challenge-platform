@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.4, 2026-10-14. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -195,11 +195,11 @@ There are no `reset` or `show-code` subcommands: reset is the [R] button, and th
 | Key | Button | Behaviour |
 |---|---|---|
 | `P` | Pairing | Opens a 300 s pairing window and starts advertising. Pressing it again restarts the window at 300 s. When the window expires, advertising stops; a session in progress may finish. On a provisioned device it only shows "Already connected. Hold reset to set up again." |
-| `R` | Reset | Needs **two presses within 3 s** (a simulated long press); a single press shows "Press reset again to confirm." Then: delete the Teton NetworkManager profiles, i.e. every profile named `teton-*` (`WifiBackend.forget_all()`, review Q24), generate a new setup code, print the new code + QR, and return to `UNPROVISIONED` with advertising off until [P] |
-| `S` | Status | Prints the state, SSID, IP, internet result and the remaining pairing time |
+| `R` | Reset | Needs **two presses within 3 s** (a simulated long press); a single press shows "Press reset again to confirm." Then: delete the Teton NetworkManager profiles, i.e. every profile named `teton-*` (`WifiBackend.forget_all()`, review Q24), generate a new setup code, print the new code + QR, and return to `UNPROVISIONED` with advertising off until [P]. Works in every state except while connecting, where it shows "Busy connecting. Try again in a moment."; a pairing window or session in progress is closed (review Q21) |
+| `S` | Status | Prints the state, SSID, IP, internet result and the remaining pairing time, then the setup code + QR again, because log lines scroll them away (review Q23) |
 | `Q` or Ctrl+C | Power | Clean shutdown: stop advertising, close the transport, restore the terminal, exit 0 |
 
-Keys are case-insensitive; other keys are ignored.
+Keys are case-insensitive; other keys are ignored, and so are escape sequences such as arrows or F1 (`ESC O P`), even though they contain button letters. Without a terminal (systemd, redirected stdin) there are no buttons: the device logs a warning and stays on without advertising (review Q23).
 
 **Status line ("LED").** Always visible at the bottom of the terminal:
 

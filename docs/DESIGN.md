@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.4, 2026-10-14. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -126,17 +126,17 @@ Configurator                                        Device
 - Five states, no more (review Q13). A failed attempt is not a state: it goes back to `SESSION_ESTABLISHED`, and the service keeps the last result for the red LED. There is no `CONNECTED` state: sending `connected`, saving `provisioned` and turning advertising off happen in one step, so `CONNECTING` goes straight to `PROVISIONED`. A handshake in progress is not a state either: the device stays `ADVERTISING` and `DeviceSession` tracks the handshake. `info.state` is the lowercase state name.
 - **The pairing window is not a state.** It is a timer owned by the service (`PairingWindow` in `buttons.py`): [P] opens it or restarts it at 300 s, and its expiry stops advertising. While it is open the device is in `ADVERTISING` or in a session. When it expires with no session, the device goes back to `UNPROVISIONED`. When it expires during a session, the session may finish (retries included); once that session ends (idle timeout or protocol error) the device goes back to `UNPROVISIONED`, not to `ADVERTISING`.
 - [P] in `PROVISIONED` doesn't change the state; it only shows "Already connected. Hold reset to set up again."
-- [R][R] in `PROVISIONED` deletes the Teton profiles, rotates the setup code, prints the new code + QR and goes to `UNPROVISIONED`, with advertising off until [P]. (Reset from the other states: open question Q21 in `IMPLEMENTATION_PLAN.md`.)
+- [R][R] in `PROVISIONED` deletes the Teton profiles, rotates the setup code, prints the new code + QR and goes to `UNPROVISIONED`, with advertising off until [P]. [R][R] works the same way in every other state except `CONNECTING`, where it only shows "Busy connecting. Try again in a moment." (review Q21). It first closes the pairing window, so a session in progress ends in `UNPROVISIONED`; no new transitions are needed.
 - `PROVISIONED` is persisted (in `state.json`). After success the device stops advertising, before the configurator disconnects, so BlueZ can't re-enable it (spike, check g), and stays on with a green LED (plan_v5, D2, replacing the exit of S4). On restart a provisioned device does not advertise; [P] doesn't change that.
 - The device does not track BLE connections (plan_v5, S3). One connection at a time is guaranteed by the radio: a connected peripheral stops advertising, and BlueZ restarts advertising after the disconnect while the advertisement is still registered, i.e. while the window is open (S1). A new `hello` ends any previous session; otherwise a session ends on the 300 s idle timeout or a protocol error.
 - A connection attempt that has started always finishes, even if the configurator is gone. The result is logged, and if it failed the profile is rolled back.
 
 ### 4.1 Buttons and status line (`buttons.py`)
 
-- **Key reader.** `TerminalButtons` puts the terminal in single-key mode (`tty.setcbreak`, standard library) rather than raw mode, so Ctrl+C still works. Each keypress arrives at once without Enter, and stdin is read through `loop.add_reader`. The original `termios` settings are restored on exit, also after a crash. The reader yields `Button` values (`PAIR`, `RESET`, `STATUS`, `POWER`) and ignores every other key; it never collects text.
+- **Key reader.** `TerminalButtons` puts the terminal in single-key mode (`tty.setcbreak`, standard library) rather than raw mode, so Ctrl+C still works. Each keypress arrives at once without Enter, and stdin is read through `loop.add_reader`. The original `termios` settings are restored on exit, also after a crash. The reader yields `Button` values (`PAIR`, `RESET`, `STATUS`, `POWER`) and ignores every other key; it never collects text. Escape sequences (arrows, F1 = `ESC O P`, Alt+key) are skipped as a whole by the pure `buttons_in()`, so they can't press a button. Without a terminal it logs a warning and yields nothing; the controller keeps ticking, so the device stays on (review Q23).
 - **Pure helpers, injected clock.** `PairingWindow(clock, duration_s=300)` (`open()`, `remaining()`, `is_open()`) and `ResetDetector(clock, within_s=3)` (`press() -> bool`, true on the second press within 3 s) hold no I/O, so tests drive them with a fake clock.
 - **Status line.** `StatusLine` derives the LED from the state, the window and the last result, by priority: yellow (connecting) > green (provisioned) > red (last attempt failed, with the reason; cleared by the next attempt or a reset) > blinking blue (window open, with countdown) > off. On a terminal it redraws one line at the bottom, and log lines are printed above it (clear the line, write the log, redraw). When stdout isn't a terminal (for example piped to `tee` for evidence), it prints LED changes as ordinary lines instead, without escape codes or countdown ticks.
-- **Controller.** `ButtonController` turns buttons into actions: [P] opens or restarts the window (or shows "Already connected. Hold reset to set up again." when provisioned), [R] arms the reset and a second [R] within 3 s runs it, [S] prints the status, [Q] powers off. A 1 s tick redraws the countdown and closes an expired window. It calls the service through a small `DeviceActions` protocol (§5), so its tests inject buttons through `QueueButtons` (an in-memory `ButtonSource`) and a fake `DeviceActions`, with no service, transport or terminal.
+- **Controller.** `ButtonController` turns buttons into actions: [P] opens or restarts the window (or shows "Already connected. Hold reset to set up again." when provisioned), [R] arms the reset and a second [R] within 3 s runs it, [S] prints the device's status text (which ends with the code + QR, review Q23) and the window's remaining time, [Q] powers off. A 1 s tick closes an expired window, calls `DeviceActions.on_tick()` (the session idle check) and redraws the LED. The controller reads the key source through `contextlib.aclosing`, so the terminal is restored as soon as it stops, also after an exception. It calls the service through a small `DeviceActions` protocol (§5), so its tests inject buttons through `QueueButtons` (an in-memory `ButtonSource`) and a fake `DeviceActions`, with no service, transport or terminal.
 
 ## 5. Key interfaces (contracts for implementation)
 
@@ -162,15 +162,20 @@ class ClientTransport(Protocol):                 # teton_common/transport.py (co
 # unregistering the advertisement). The socket transport stops accepting new clients instead.
 
 class ButtonSource(Protocol):                    # teton_device/buttons.py
-    def __aiter__(self) -> AsyncIterator[Button]: ...            # PAIR | RESET | STATUS | POWER
+    def __aiter__(self) -> AsyncGenerator[Button, None]: ...     # PAIR | RESET | STATUS | POWER
 # TerminalButtons (termios/tty) on the device; QueueButtons in tests.
 
 class DeviceActions(Protocol):                   # teton_device/buttons.py, implemented by DeviceService
-    def is_provisioned(self) -> bool: ...
+    def state(self) -> DeviceState: ...                         # [P] ignored if PROVISIONED; [R] refused if CONNECTING
+    def last_failure(self) -> FailureReason | None: ...         # red LED until the next attempt or a reset
     async def set_advertising(self, on: bool) -> None: ...      # window opened / closed or expired
     async def reset(self) -> None: ...                          # forget profiles, rotate code, print code + QR
-    def status_text(self) -> str: ...                           # state, SSID, IP, internet, window left
+    def status_text(self) -> str: ...                           # state, SSID, IP, internet, code + QR (window: controller)
     async def power_off(self) -> None: ...
+    def on_tick(self) -> None: ...                              # every second: the session idle check
+# state() replaces is_provisioned(): the controller also needs CONNECTING (Q21) and the LED
+# needs the state and the last failure. The pairing window belongs to the controller, which
+# adds its remaining time to the [S] text.
 
 class WifiBackend(Protocol):                     # teton_device/wifi/backend.py
     async def scan(self) -> list[Network]: ...
