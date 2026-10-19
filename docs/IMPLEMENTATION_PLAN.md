@@ -602,24 +602,26 @@ All ✅ on the owner's Android phone with Chrome: secure context (with the flag)
 
 ### Step 6.3: 🔧 HARDWARE: real Wi-Fi run and evidence
 
-- **Goal:** meet SPEC §12 MUST #1–#5 on real hardware and record the evidence.
-- **Files:** `docs/evidence/` (logs, screenshots, `.btsnoop` capture, `README.md` index), and `tests/fixtures/nmcli/` (real recorded outputs, anonymised).
+- **Goal:** meet SPEC §12 MUST #1–#5 on real hardware and record the evidence, with the phone page as the configurator (D3). The minimum run only (Q118): no WPA3 run, no `nmcli` fixture recording.
+- **Files:** `docs/evidence/` (`run-psk.btsnoop`, `device-run.log`, `phone-*.png`, `laptop-device.png`, `README.md` index); `scripts/check_capture.py` (Q116).
 - **You do:**
-  1. Phone: turn on the hotspot (WPA2-Personal; also try WPA3 if the phone offers it). Pick a password you don't use anywhere else, because it will appear in evidence notes.
-  2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop` in one terminal, and `teton-device run --verbose 2> docs/evidence/device-run.log` in another (logs only: the screen, with the setup code, stays out of the file, review Q73; follow it with `tail -f` in a third terminal), then press [P].
-  3. ~~Laptop B: `teton-configurator 2>&1 | tee docs/evidence/configurator-run.log`.~~ The phone page instead (D3, Q112): laptop 1 serves `web/`, the phone opens it while it is also the hotspot. Phone screenshots replace the configurator log.
-  4. Run the scenarios:
-     - **wrong setup code:** a clear message, and nothing else is sent;
-     - **wrong hotspot password:** `wrong_password`, then a retry in the same session;
-     - **correct password:** "Connected, IP …, internet OK".
-  5. Check the capture: `btmon -r docs/evidence/run-psk.btsnoop | grep -c "<hotspot password>"` gives `0`. Also grep for the SSID; the SSID travels encrypted too, so it should also be 0. Then, before committing anything, grep both `.log` files for the hotspot password and the setup code, raw and with dashes (`grep -ci`): all must give `0` (review Q63).
-  6. Take screenshots of laptop A's terminal and of the phone page at each scenario.
-  7. Record `nmcli` outputs for the fixtures: the wrong-password and unknown-SSID errors, and the scan output.
-  8. On laptop A afterwards: press [R] twice to delete the Teton profile and rejoin your normal Wi-Fi, then [Q].
-- **Notes about laptop A:**
-  - Laptop A has many saved Wi-Fi profiles with autoconnect on. After a failed attempt, NetworkManager reconnects one of them, which is the rollback SPEC §8.6 expects.
-  - After success, a home network in range with a higher autoconnect priority could take over later (Q17). For a clean demo, run it away from your home network, or temporarily `nmcli connection modify <home> connection.autoconnect no`. That choice is yours to make.
+  1. Phone: set up a WPA2-Personal hotspot with a throwaway password (Q117), off for now.
+  2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop`; `teton-device run --verbose 2> docs/evidence/device-run.log` (logs only: the screen shows the setup code, Q73); `python3 -m http.server 8000 --bind <laptop-ip> --directory web`.
+  3. Phone, still on the home Wi-Fi: open the page; then turn the hotspot on and keep the tab open (Q114).
+  4. [P], Find the device, then the scenarios, with a phone screenshot at each:
+     - **wrong setup code:** the wrong-code text, nothing else sent;
+     - **wrong hotspot password:** the wrong-password text (`wrong_password`), then Try again in the same session;
+     - **correct password:** "Connected. IP …, internet OK.", green LED.
+  5. Laptop A: `nmcli -t -f NAME,DEVICE connection show --active` (Q115), a screenshot of the device terminal, then stop `btmon`.
+  6. Checks before committing (Q63, Q116): `python scripts/check_capture.py docs/evidence/run-psk.btsnoop '<password>' '<SSID>' '<code>' '<code with dashes>'` prints `OK`; `grep -ci` of `device-run.log` for the password and the code (both forms) gives `0`.
+  7. Laptop A: [R][R] (deletes the Teton profile, retires the code shown in the screenshot, rejoins the normal Wi-Fi), then [Q].
+- **Notes about laptop A:** saved profiles with autoconnect stay as they are (Q115). After a failed attempt NetworkManager reconnects one of them, the rollback SPEC §8.6 expects; if the home network takes over after success during the run, switch its autoconnect off temporarily.
+- **Decided:** Q114–Q121.
 - **Implements:** SPEC §12 MUST #1–#5, §8. DESIGN §7 (manual row).
+
+#### First run (2026-10-19): repeated (Q121)
+
+Everything as expected except MUST #3: the wrong password was reported as `timeout`, because NetworkManager 1.46 asks for the key again and `up` runs into `--wait` (fixed by Q119). The log also showed a false `protocol_error` on [R][R] (fixed by Q120). The capture check passed for the password and the code; the SSID was mistyped in the check. The run is repeated, so its files are not kept.
 
 **At this point all MUST items except the docs are done.**
 
@@ -857,6 +859,14 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q111 | Page input checks | Code normalisation and password length, ported, tested in Node (2026-10-19, SPEC §9.3) |
 | Q112 | Steps that needed laptop 2 | 6.3 with the phone; 7.2 not possible; 0.3 to CI; README "Tested on" updated (2026-10-19) |
 | Q113 | CI | Deferred with all of Phase 7 (2026-10-19) |
+| Q114 | Page load during the hotspot run | Load on home Wi-Fi, then hotspot on, tab kept open (2026-10-19) |
+| Q115 | Network laptop A joins | Profiles untouched; recorded; autoconnect off only if needed (2026-10-19) |
+| Q116 | Evidence and checks | `docs/evidence/` files; `scripts/check_capture.py` instead of grep on hex output (2026-10-19) |
+| Q117 | Hotspot password | Throwaway, may be named in the evidence index (2026-10-19) |
+| Q118 | WPA3 run, nmcli fixtures | Dropped: minimum run only (2026-10-19) |
+| Q119 | A rejected Wi-Fi key | "not given in 'passwd-file'" → `wrong_password`, before the timeout rule; real fixture recorded (2026-10-19, SPEC §7) |
+| Q120 | [R][R] without a session | No false `protocol_error`: the session is ended only while active (2026-10-19) |
+| Q121 | Repeating Step 6.3 | The whole run again after the fix; checks rerun with the right SSID (2026-10-19) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

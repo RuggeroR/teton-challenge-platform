@@ -106,8 +106,10 @@ class DeviceService:
     async def reset(self) -> None:
         """[R][R]. The controller has closed the window and refused CONNECTING (Q21)."""
         assert self._session is not None
-        # First, before any await, so no message can slip into the old session.
-        self._session.end("reset")  # SESSION_ESTABLISHED -> UNPROVISIONED: window closed
+        # First, before any await, so no message can slip into the old session. Only when
+        # there is one: end() without a session logs a protocol error (review Q120).
+        if self._session.active:
+            self._session.end("reset")  # SESSION_ESTABLISHED -> UNPROVISIONED: window closed
         self._session.last_result = None  # clears the red LED
         await self._radio(False)
         removed = await self._wifi.forget_all()  # every teton-* profile (Q24)

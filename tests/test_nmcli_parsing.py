@@ -161,6 +161,16 @@ def test_nmcli_timeout_exit_code_is_timeout() -> None:
     assert map_failure(3, fixture("up-timeout.txt"), psk_creds()) == FailureReason.TIMEOUT
 
 
+@pytest.mark.parametrize(
+    ("creds", "reason"),
+    [(psk_creds(), FailureReason.WRONG_PASSWORD), (peap_creds(), FailureReason.AUTH_FAILED)],
+)
+def test_a_key_asked_for_again_is_a_rejected_key(creds: Credentials, reason: FailureReason) -> None:
+    """Recorded on laptop 1 (review Q119): a wrong PSK ends in --wait's timeout (exit 3),
+    after NetworkManager asked nmcli for the key again."""
+    assert map_failure(3, fixture("up-wrong-password-nm146.txt"), creds) == reason
+
+
 # ---------------------------------------------------------------------------
 # Building commands
 
