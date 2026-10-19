@@ -619,6 +619,18 @@ All ✅ on the owner's Android phone with Chrome: secure context (with the flag)
 - **Decided:** Q114–Q121.
 - **Implements:** SPEC §12 MUST #1–#5, §8. DESIGN §7 (manual row).
 
+#### Results (2026-10-19, final run: laptop 1 + Pixel 9, Android 17, Chrome 155.0.8059.81)
+
+| MUST | Check | Result | Evidence (`docs/evidence/`) |
+|---|---|---|---|
+| #1 | Provisioned onto a phone hotspot using only the guided configurator and [P]; nothing advertised before [P] | ✅ | `device-run.log` 18:16:45–18:17:35; `phone-0*.png` |
+| #2 | `connected` with an IP and confirmed internet | ✅ IP 10.195.95.40, internet `full`; `teton-Coldspot` active | `phone-04-connected.png`, `nmcli-teton.png`, `Led-green-teton-device.png` |
+| #3 | Wrong password → `wrong_password`, retry in the same session | ✅ after 10 s (NetworkManager: "Secrets were required"), then success on *Try again* | `phone-03-wrong-password-*.png`, `Led-red-teton-device.png` |
+| #4 | Wrong setup code fails the handshake, nothing else sent | ✅ the phone rejected the tag; the next `hello` started a fresh session | `phone-01-wrong-code-*.png`; log 18:18:28–18:19:08 |
+| #5 | No plaintext password in a `btmon` capture | ✅ `check_capture.py`: password, SSID and code (both forms) not found in 42 writes, 87 notifications, 3 reads; device log: 0 hits for the password and the code | `run-psk.btsnoop`, `README.md` |
+
+Also seen: [R][R] removed the `teton-Coldspot` profile and logged no `protocol_error` (Q120 on hardware). NetworkManager rejected the wrong key in two ways across the runs, failing at once or running into `--wait`; both now report `wrong_password` (Q119).
+
 #### First run (2026-10-19): repeated (Q121)
 
 Everything as expected except MUST #3: the wrong password was reported as `timeout`, because NetworkManager 1.46 asks for the key again and `up` runs into `--wait` (fixed by Q119). The log also showed a false `protocol_error` on [R][R] (fixed by Q120). The capture check passed for the password and the code; the SSID was mistyped in the check. The run is repeated, so its files are not kept.

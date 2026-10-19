@@ -1,0 +1,47 @@
+{"name": "Teton-2F18", "event": "ble_registered", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:16:45.159790Z"}
+{"state": "unprovisioned", "event": "device_started", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:16:45.159946Z"}
+{"button": "pair", "event": "button", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:17:35.955871Z"}
+{"from_state": "unprovisioned", "to_state": "advertising", "reason": "pairing button", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:17:35.960639Z"}
+{"on": true, "event": "advertising", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:17:35.971945Z"}
+{"session_id": "c56a429e", "event": "handshake_started", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:18:28.472203Z"}
+{"session_id": "c56a429e", "reason": "new hello", "event": "session_ended", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:08.745158Z"}
+{"session_id": "4ff49abd", "event": "handshake_started", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:08.745593Z"}
+{"from_state": "advertising", "to_state": "session_established", "reason": "handshake ok", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:09.148564Z"}
+{"argv": ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "yes"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:12.658695Z"}
+{"session_id": "4ff49abd", "networks": 8, "event": "scan_done", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:12.658936Z"}
+{"from_state": "session_established", "to_state": "connecting", "reason": "set_credentials", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:47.220591Z"}
+{"session_id": "4ff49abd", "ssid": "Coldspot", "security": "wpa2-psk", "event": "connecting", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:47.221481Z"}
+{"argv": ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:47.240778Z"}
+{"interface": "wlp0s20f3", "event": "wifi_interface", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:47.240910Z"}
+{"argv": ["nmcli", "-t", "-f", "NAME,UUID", "connection", "show"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:47.255572Z"}
+{"argv": ["nmcli", "connection", "add", "type", "wifi", "con-name", "teton-Coldspot", "ifname", "wlp0s20f3", "ssid", "Coldspot", "connection.autoconnect", "no", "connection.autoconnect-priority", "10", "wifi-sec.key-mgmt", "wpa-psk"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:47.583831Z"}
+{"argv": ["nmcli", "connection", "edit", "id", "teton-Coldspot"], "returncode": 0, "timed_out": false, "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:47.937771Z"}
+{"argv": ["nmcli", "--wait", "45", "connection", "up", "id", "teton-Coldspot"], "returncode": 4, "timed_out": false, "stderr": "Warning: password for '802-11-wireless-security.psk' not given in 'passwd-file' and nmcli cannot ask without '--ask' option.\nError: Connection activation failed: Secrets were required, but not provided\nHint: use 'journalctl -xe NM_CONNECTION=29b3ee4f-b93a-4e06-9416-a86dfaeb2eb7 + NM_DEVICE=wlp0s20f3' to get more details.", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:57.268642Z"}
+{"argv": ["nmcli", "-t", "-f", "NAME,UUID", "connection", "show"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:57.283734Z"}
+{"argv": ["nmcli", "connection", "delete", "uuid", "29b3ee4f-b93a-4e06-9416-a86dfaeb2eb7"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:19:57.607669Z"}
+{"session_id": "4ff49abd", "reason": "wrong_password", "event": "connect_failed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:57.607926Z"}
+{"from_state": "connecting", "to_state": "session_established", "reason": "wifi attempt failed", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:19:57.608047Z"}
+{"from_state": "session_established", "to_state": "connecting", "reason": "set_credentials", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:36.316607Z"}
+{"session_id": "4ff49abd", "ssid": "Coldspot", "security": "wpa2-psk", "event": "connecting", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:36.317637Z"}
+{"argv": ["nmcli", "-t", "-f", "NAME,UUID", "connection", "show"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:36.333789Z"}
+{"argv": ["nmcli", "connection", "add", "type", "wifi", "con-name", "teton-Coldspot", "ifname", "wlp0s20f3", "ssid", "Coldspot", "connection.autoconnect", "no", "connection.autoconnect-priority", "10", "wifi-sec.key-mgmt", "wpa-psk"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:36.654656Z"}
+{"argv": ["nmcli", "connection", "edit", "id", "teton-Coldspot"], "returncode": 0, "timed_out": false, "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:37.014082Z"}
+{"argv": ["nmcli", "--wait", "45", "connection", "up", "id", "teton-Coldspot"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:39.564479Z"}
+{"argv": ["nmcli", "networking", "connectivity", "check"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:39.951948Z"}
+{"argv": ["nmcli", "-t", "-f", "GENERAL.IP4-CONNECTIVITY,IP4.ADDRESS,IP4.GATEWAY", "device", "show", "wlp0s20f3"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:39.968026Z"}
+{"argv": ["nmcli", "connection", "modify", "id", "teton-Coldspot", "connection.autoconnect", "yes"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:20:40.286368Z"}
+{"session_id": "4ff49abd", "ip": "10.195.95.40", "internet": "full", "event": "connected", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:40.286624Z"}
+{"from_state": "connecting", "to_state": "provisioned", "reason": "wifi connected", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:40.297758Z"}
+{"on": false, "event": "advertising", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:40.302086Z"}
+{"session_id": "4ff49abd", "reason": "provisioned", "event": "session_ended", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:40.302147Z"}
+{"event": "pairing_window_closed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:20:40.482574Z"}
+{"button": "reset", "event": "button", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:06.565629Z"}
+{"button": "reset", "event": "button", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:06.769280Z"}
+{"argv": ["nmcli", "-t", "-f", "NAME,UUID", "connection", "show"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:22:06.786513Z"}
+{"argv": ["nmcli", "connection", "delete", "uuid", "4ac3fde3-4202-490c-8e08-1ede24059636"], "returncode": 0, "timed_out": false, "stderr": "", "event": "command_done", "device_id": "TETON-DA2F18", "level": "debug", "ts": "2026-10-19T18:22:07.138947Z"}
+{"from_state": "provisioned", "to_state": "unprovisioned", "reason": "reset button", "event": "state_changed", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:07.146566Z"}
+{"profiles_removed": 1, "event": "device_reset", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:07.146725Z"}
+{"button": "power", "event": "button", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:09.130693Z"}
+{"event": "power_off", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:09.130856Z"}
+{"event": "ble_stopped", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:09.135507Z"}
+{"event": "device_stopped", "device_id": "TETON-DA2F18", "level": "info", "ts": "2026-10-19T18:22:09.135633Z"}

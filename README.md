@@ -135,9 +135,11 @@ command -v hostapd                     # /usr/sbin/hostapd (only needed for the 
 
 ### Tested on
 
+The full run on this hardware, with screenshots, the device log and a `btmon` capture, is in [`docs/evidence/`](docs/evidence/README.md).
+
 | | Laptop 1 (Teton Device) | Phone (configurator) |
 |---|---|---|
-| OS | Ubuntu 24.04.5 LTS, kernel 7.0.0-38-generic (HWE) | Android, Chrome (versions recorded with the Step 6.3 evidence) |
+| OS | Ubuntu 24.04.5 LTS, kernel 7.0.0-38-generic (HWE) | Pixel 9, Android 17, Chrome 155.0.8059.81 |
 | Python | 3.12.3 | n/a |
 | BlueZ | 5.72 (Intel adapter, central + peripheral roles) | n/a |
 | NetworkManager | 1.46.0 | n/a |
