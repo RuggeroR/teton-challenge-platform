@@ -1,6 +1,6 @@
 # Implementation plan
 
-Version 9, 2026-10-19. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80); version 9 records the Step 6.1 and 6.2 answers (plan_v5, "Phase 6 review questions", Q81–Q101). If this plan disagrees with those documents, they win.
+Version 10, 2026-10-19. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN.md) into small steps, in the order we build them. Why each decision was made is in [plan_v5.md](plan_v5.md). Version 2 applied the answers to review questions Q1, Q2, Q3, Q7, Q8 and Q9; version 3 applied the post-spike simplifications S1–S4 and fixed the laptop roles; version 4 applies D1 (laptop B on Ubuntu 26.04 / Python 3.14: new Step 0.3, CI matrix) and D2 (device buttons and LED: new Step 2.7, `set_advertising`, the device stays on after success, no `reset`/`show-code` subcommands) (plan_v5); version 5 records the answers to the open questions that block Phase 2 (plan_v5, "Phase 2 review questions"); version 6 records the Phase 3 answers, step by step (plan_v5, "Phase 3 review questions"); version 7 records the Phase 4 answers (plan_v5, "Phase 4 review questions", Q48–Q63); version 8 records the Phase 5 answers (plan_v5, "Phase 5 review questions", Q64–Q80); version 9 records the Step 6.1 and 6.2 answers (plan_v5, "Phase 6 review questions", Q81–Q101); version 10 records D3, the loss of laptop 2, and the phone page that replaces it (plan_v5, Q102–Q113: new Step 6.2b, Steps 6.3 and 7.2 changed, Phase 7 deferred). If this plan disagrees with those documents, they win.
 
 ## How to read this plan
 
@@ -29,8 +29,8 @@ Version 9, 2026-10-19. This plan turns [SPEC.md](SPEC.md) and [DESIGN.md](DESIGN
 | 3. Configurator (`teton_configurator`) | 3.1–3.3 | MUST | no |
 | 4. End-to-end test (in memory) | 4.1 | MUST | no |
 | 5. Simulation mode + CLIs | 5.1–5.2 | SHOULD (CLIs are MUST) | no |
-| 6. Real BLE + real Wi-Fi | 6.1–6.3 | MUST | 🔧 yes |
-| 7. SHOULD items | 7.1–7.3 | SHOULD | 🔧 7.2, 7.3 optional |
+| 6. Real BLE + real Wi-Fi | 6.1–6.3 (6.2b: the phone page, D3) | MUST | 🔧 yes |
+| 7. SHOULD items | 7.1–7.3 | SHOULD, **deferred** (Q113); 7.2 not possible (Q112) | 🔧 7.3 optional |
 | 8. Docs and writeup | 8.1–8.3 | MUST | no |
 | 9. COULD items | 9.x | COULD, only if you ask | varies |
 
@@ -116,13 +116,15 @@ Design consequences:
 
 ### Step 0.3: 🔧 HARDWARE (laptop B): install check on Ubuntu 26.04 / Python 3.14
 
+> **Not run (2026-10-19):** laptop 2's disk failed during this step (I/O errors on Python imports). It would move to CI (Q112), which is deferred (Q113), so Python 3.14 is untested; the README says so.
+
 - **Goal:** confirm that the package installs on laptop 2's Python 3.14 and that the configurator's libraries work there, before we build on them (plan_v5, D1).
 - **Files:** none. The results go into this plan, and laptop 2's column into the README "Tested on" table.
 - **You do (laptop 2):**
   ```bash
   lsb_release -rs; python3 --version                  # 26.04, Python 3.14.x
   python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
-  python -c "import cryptography, bleak; print(cryptography.__version__, bleak.__version__)"
+  python -c "import cryptography, bleak, bless; from importlib.metadata import version as v; print(v('cryptography'), v('bleak'), v('bless'))"   # bleak has no __version__
   python -c "from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey as K; K.generate(); print('x25519 ok')"
   pytest                                              # same result as on laptop 1
   ```
@@ -546,6 +548,19 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Decided:** Q81–Q90.
 - **Implements:** SPEC §4. DESIGN §2 (`gatt_server.py`).
 
+#### Results (2026-10-19, laptop 1 + phone with nRF Connect)
+
+Setup: laptop 1 (Ubuntu 24.04.5, BlueZ 5.72, `bless` 0.3.0), `teton-device run --verbose 2> ~/device-6.1.log`, device `TETON-DA2F18` / `Teton-2F18`. Two runs: the first for checks 1–3 and 6, a rerun for 4 and 5.
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | Nothing advertised before [P] | ✅ | Log: `ble_registered` at 15:38:55, first `advertising on` at 15:40:25 after `button pair`; the phone saw nothing before |
+| 2 | [P] advertises; [P] again restarts the window without a second advertisement | ✅ | Second `button pair` at 15:42:04 logged no new `advertising` line (Q82) |
+| 3 | Service and 4 characteristics visible, `info` reads as JSON | ✅ | Seen in nRF Connect |
+| 4 | Window expires while connected; the connection keeps working | ✅ | Rerun: after the window expired, `info` still read on the same connection, now `"state":"unprovisioned"` |
+| 5 | After the disconnect, advertising does not come back | ✅ | Rerun: `Teton-2F18` did not reappear in the phone's scan |
+| 6 | [Q] shuts down cleanly, adapter alias restored | ✅ | `power_off` → `advertising off` → `ble_stopped` → `device_stopped` within 15 ms, no `ble_close_step_failed`; `bluetoothctl show` alias back to the laptop name |
+
 ### Step 6.2: BLE configurator transport (`ble_client.py`)
 
 - **Goal:** discovery and the GATT client with `bleak`.
@@ -560,9 +575,30 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
   - The reassembly timeout counts from the last chunk, not the first (Q94).
   - `teton-configurator` without `--simulate` uses `BleDiscovery` (Q99).
 - **Tests (no radio):** the pure helpers (RSSI to signal, device list from scan results); building the transport doesn't import `bleak` (fresh interpreter); with a fake `bleak`-shaped client injected through `make_client` (Q100): subscribing comes before anything else, notifications in order, writes with `response=True`, a missing service, send after the disconnect callback, idempotent close, errors as `TransportError`; a slow message that keeps progressing is not dropped (Q94); the CLI wiring and the Bluetooth-off sentence.
-- **Verify (🔧 both laptops):** laptop A `teton-device run`, then press [P]; laptop B `teton-configurator`. The device appears; the code is accepted; the scan list shows the real networks around laptop A. Stop before entering credentials. That comes in 6.3.
+- **Verify (🔧 both laptops):** ~~laptop A `teton-device run`, then press [P]; laptop B `teton-configurator`. The device appears; the code is accepted; the scan list shows the real networks around laptop A.~~ Not possible: laptop 2 was lost (D3). Replaced by Step 6.2b's Verify, with the phone page; `ble_client.py` is tested with fakes only.
 - **Decided:** Q91–Q101.
 - **Implements:** SPEC §4, §9.2 (steps 1–4). DESIGN §2 (`ble_client.py`).
+
+### Step 6.2b: Phone configurator (`web/`)
+
+- **Goal:** the configurator for the hardware runs, on the phone, since laptop 2 is gone (plan_v5 D3).
+- **Files:** `web/index.html`, `web/protocol.js`, `web/test_protocol.mjs`, `web/test_client.mjs`, `web/package.json` (only `"type": "module"`, so Node loads `protocol.js` as the browser does; no dependencies); `tests/web_data.py` (copies texts and constants into `web/`, writes the vectors), `tests/fixtures/web_vectors.json`, `tests/test_web.py`; `src/teton_configurator/ui_text.py` (the page's own texts); `scripts/spike/phone_check.html` (the capability check, kept like the other spikes).
+- **Content:**
+  - `protocol.js` (ES module, no DOM): setup-code normalisation (Q111); framing and a reassembler with the 10 s rule of Q94; the configurator's handshake (X25519, HKDF salted with the code, the HMAC confirmations, `confirm` checked with `subtle.verify`, Q107); the envelope cipher with per-direction `seq`; encoding and checking the messages the page sends and receives; a `Client` with the waits of `client.py` (Q110). Constants come from `protocol.py` through a marked block (Q105).
+  - `index.html`: the steps of SPEC §9.3 (Q103, Q104), every text from `ui_text.py` through a marked block (Q105); `gattserverdisconnected` shows "connection lost" (Q110); notifications on `session` and `status` start before any write; writes with response, one at a time.
+  - `python tests/web_data.py` rewrites both marked blocks and the vectors; `test_web.py` fails if any of them is out of date.
+- **Tests:** `test_web.py`: the copied texts and constants match; the vectors match the Python code; `node web/test_protocol.mjs` passes (skipped without `node`): setup-code cases from `test_setup_code.py`, framing chunks and reassembly, the handshake with fixed keys (public keys, transcript, keys, both confirms, a wrong code rejected), envelopes both ways (seal, open, wrong `seq` and tampered `ct` rejected), messages encoded byte for byte as Python does; `node web/test_client.mjs` (also skipped without `node`): the page's `Client` against the real `DeviceService` over the simulation socket, the sim wire format standing in for GATT: a wrong code, the right code, a scan, a wrong password, then the right one, ending `provisioned`.
+- **Verify (🔧 laptop A + phone):** laptop 1 runs `teton-device run --verbose 2> ~/device-6.2b.log` and serves `web/` (`python3 -m http.server 8000 --bind <laptop-ip> --directory web`); the phone (Chrome flag set for that address, Q109) opens the page; [P]; Find the device → the picker shows `Teton-XXXX`; a wrong code → the wrong-code text, then the right code → accepted; the scan list shows the real networks around laptop A. Stop before entering a password: that is Step 6.3.
+- **Decided:** D3, Q102–Q111.
+- **Implements:** SPEC §9.3.
+
+#### Results (2026-10-19, laptop 1 + Android phone with Chrome)
+
+✅ As planned: the page loaded from laptop 1 (`http.server` + the Chrome flag); after [P] the picker showed the device; a wrong code gave the wrong-code text and the field again; the real code gave "Setup code accepted." and the device's real scan list of the networks around laptop 1. Stopped before credentials (Step 6.3).
+
+#### Phone capability check (2026-10-19, `scripts/spike/phone_check.html`)
+
+All ✅ on the owner's Android phone with Chrome: secure context (with the flag), Web Bluetooth with an adapter, WebCrypto X25519 (32-byte public key, both sides derive the same secret), HKDF-SHA256 (96 bytes), HMAC-SHA256 (sign and verify), AES-256-GCM with AAD; the real device found after [P], connected, the service and its 4 characteristics with the right properties, `info` read as JSON, `session` and `status` subscribed.
 
 ### Step 6.3: 🔧 HARDWARE: real Wi-Fi run and evidence
 
@@ -571,13 +607,13 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **You do:**
   1. Phone: turn on the hotspot (WPA2-Personal; also try WPA3 if the phone offers it). Pick a password you don't use anywhere else, because it will appear in evidence notes.
   2. Laptop A: `sudo btmon -w docs/evidence/run-psk.btsnoop` in one terminal, and `teton-device run --verbose 2> docs/evidence/device-run.log` in another (logs only: the screen, with the setup code, stays out of the file, review Q73; follow it with `tail -f` in a third terminal), then press [P].
-  3. Laptop B: `teton-configurator 2>&1 | tee docs/evidence/configurator-run.log`.
+  3. ~~Laptop B: `teton-configurator 2>&1 | tee docs/evidence/configurator-run.log`.~~ The phone page instead (D3, Q112): laptop 1 serves `web/`, the phone opens it while it is also the hotspot. Phone screenshots replace the configurator log.
   4. Run the scenarios:
      - **wrong setup code:** a clear message, and nothing else is sent;
      - **wrong hotspot password:** `wrong_password`, then a retry in the same session;
      - **correct password:** "Connected, IP …, internet OK".
   5. Check the capture: `btmon -r docs/evidence/run-psk.btsnoop | grep -c "<hotspot password>"` gives `0`. Also grep for the SSID; the SSID travels encrypted too, so it should also be 0. Then, before committing anything, grep both `.log` files for the hotspot password and the setup code, raw and with dashes (`grep -ci`): all must give `0` (review Q63).
-  6. Take screenshots of both terminals.
+  6. Take screenshots of laptop A's terminal and of the phone page at each scenario.
   7. Record `nmcli` outputs for the fixtures: the wrong-password and unknown-SSID errors, and the scan output.
   8. On laptop A afterwards: press [R] twice to delete the Teton profile and rejoin your normal Wi-Fi, then [Q].
 - **Notes about laptop A:**
@@ -591,6 +627,8 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 ## Phase 7: SHOULD items
 
+> **Deferred (2026-10-19, Q113):** the hand-in needs the hardware run first. 7.1 (CI) and 7.3 (systemd, polkit, preflight) can come back later; 7.2 is not possible.
+
 ### Step 7.1: CI (GitHub Actions)
 
 - **Goal:** ruff + pytest on every push and PR.
@@ -601,6 +639,8 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 - **Implements:** SPEC §12 SHOULD #8 (second half). DESIGN §7 (CI).
 
 ### Step 7.2: 🔧 HARDWARE: WPA2-Enterprise (PEAP) test with `hostapd`
+
+> **Not possible (2026-10-19, Q112):** it needed laptop 2 as the access point. SHOULD #9 is dropped; Enterprise stays covered by the fake Wi-Fi and the nmcli fixture tests.
 
 - **Goal:** prove the PEAP path against a real 802.1X authenticator.
 - **Files:**
@@ -676,7 +716,7 @@ No I/O in this phase: no sockets, no subprocesses, no clock or randomness except
 
 | # | Item | Notes |
 |---|---|---|
-| 9.1 | Phone page `web/index.html` (Web Bluetooth + WebCrypto) | Reuses the known-answer vector from Step 1.5. 🔧 needs Chrome on Android. WebCrypto supports X25519 in recent Chrome; this needs checking first |
+| 9.1 | ~~Phone page~~ | Built as Step 6.2b (D3) |
 | 9.2 | EAP-TLS | A new security type, per-device client certificates, and the `hostapd` config extended |
 | 9.3 | `.deb`, Prometheus metrics, Smith enrollment stub | Each would need a new dependency or tool; ask first |
 
@@ -805,6 +845,18 @@ Answered on 2026-10-11 and recorded in [plan_v5.md](plan_v5.md), SPEC 1.2 and DE
 | Q99 | Configurator CLI, Bluetooth off | `BleDiscovery` without `--simulate`; `ui_text.BLUETOOTH_UNAVAILABLE`, exit 1 (2026-10-19, SPEC §9.2) |
 | Q100 | BLE client tests | Pure helpers, no-`bleak` import check, fake `bleak`-shaped client via `make_client` (2026-10-19, DESIGN §7) |
 | Q101 | Pending hardware checks | Step 0.3 before 6.2's Verify; central spike superseded (2026-10-19) |
+| D3 / Q102 | Laptop 2 lost | The phone page is the configurator for the hardware runs (Step 6.2b); `ble_client.py` tested with fakes only; MUST #1 reworded (2026-10-19, SPEC §9.3, §12) |
+| Q103 | What the page supports | Code, scan list, WPA2/WPA3 password networks, retries; no hidden, no Enterprise (2026-10-19, SPEC §9.3) |
+| Q104 | Picking the device | Chrome's picker, filtered by the service UUID (2026-10-19, SPEC §9.3) |
+| Q105 | Texts on the page | Copied from `ui_text.py` by a script, checked by a test (2026-10-19, DESIGN §7) |
+| Q106 | Files | `web/index.html` + `web/protocol.js` (2026-10-19, DESIGN §2) |
+| Q107 | Browser crypto | WebCrypto only; `confirm` checked with `subtle.verify` (2026-10-19, SPEC §9.3) |
+| Q108 | Testing the JavaScript | Python vectors + `web/test_protocol.mjs` in Node, skipped without `node` (2026-10-19, DESIGN §7, §8) |
+| Q109 | Hosting | Laptop 1 over HTTP with the Chrome flag; public Pages decided before submitting (2026-10-19, SPEC §9.3) |
+| Q110 | Page waits and disconnects | Same waits as `client.py`; `gattserverdisconnected` shows "connection lost" (2026-10-19, SPEC §9.3) |
+| Q111 | Page input checks | Code normalisation and password length, ported, tested in Node (2026-10-19, SPEC §9.3) |
+| Q112 | Steps that needed laptop 2 | 6.3 with the phone; 7.2 not possible; 0.3 to CI; README "Tested on" updated (2026-10-19) |
+| Q113 | CI | Deferred with all of Phase 7 (2026-10-19) |
 
 Post-spike simplifications, recorded in plan_v5 ("v5 additions after the BLE spike"): **S1** no `busy`, **S2** fixed 20-byte chunks, **S3** no connection tracking (a new `hello` starts a new session), **S4** the device exits after success. Laptop roles fixed: laptop 1 = device, laptop 2 = configurator.
 

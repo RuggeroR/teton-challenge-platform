@@ -182,6 +182,25 @@ CA_FILE_NOT_CERTIFICATE = (
 )
 
 # ---------------------------------------------------------------------------
+# The phone page (web/, plan_v5 D3). tests/web_data.py copies every text the page uses into
+# web/index.html, so this file stays the only place for texts (review Q105).
+
+PAGE_UNSUPPORTED = (
+    "This browser can't set up the device. Open this page in Chrome on an Android phone."
+)
+PAGE_FIND_DEVICE = "Find the device"
+PAGE_CONNECTING = "Connecting to the device..."
+PAGE_CHECK_CODE = "Check the code"
+PAGE_CONNECT = "Connect"
+PAGE_START_OVER = "Start over"
+PAGE_STOPPED = "Setup stopped. Tap Start over to begin again."
+PAGE_NO_NETWORKS = "The device found no networks it can join. Move it closer and scan again."
+PAGE_ENTERPRISE = (
+    "This page can't join enterprise networks. Pick another network, or use the laptop "
+    "configurator."
+)
+
+# ---------------------------------------------------------------------------
 # The network list (review Q30)
 
 _BARS = "▂▄▆█"

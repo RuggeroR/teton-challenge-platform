@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Design
 
-Version 1.7, 2026-10-19. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5); 1.5 applies the Phase 3 review decisions so far (Q25–Q30: configurator texts, §6; Q31–Q37: the protocol client, §5; Q38–Q47: the guided flow, §5); 1.6 applies the Phase 5 review decisions (Q64–Q72: the simulation transport, §2, §5, §7; Q73: logs on stderr through the status line, §4.1; Q74–Q80: the CLIs, §5, §7). 1.7 applies the Step 6.1 and 6.2 review decisions (Q81–Q90: the BLE device transport, §5, §7; Q91–Q101: the BLE configurator transport, §5, §7). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
+Version 1.8, 2026-10-19. This is the implementation design: how the code is organised and how the pieces interact. **What** the system must do is in [SPEC.md](SPEC.md); **why** each choice was made is in [plan_v5.md](plan_v5.md). 1.1 split the transport interface (§5) and moved the BLE spike first (§9); 1.2 applied the post-spike simplifications S1–S4 (§4, §5, §9); 1.3 adds the device buttons and LED (`buttons.py`), the pairing window and `set_advertising` (plan_v5 D2: §2, §3, §4, §5, §7), and the Python 3.12 + 3.14 CI matrix (D1: §7); 1.4 applies the Phase 2 review decisions (Q13: five states, §4; Q4, Q5, Q6, Q22: session rules, §5, §6; Q24: `forget_all`, §5; Q10, Q11, Q17: nmcli backend, §2, §6; Q21, Q23: buttons, §4, §4.1, §5); 1.5 applies the Phase 3 review decisions so far (Q25–Q30: configurator texts, §6; Q31–Q37: the protocol client, §5; Q38–Q47: the guided flow, §5); 1.6 applies the Phase 5 review decisions (Q64–Q72: the simulation transport, §2, §5, §7; Q73: logs on stderr through the status line, §4.1; Q74–Q80: the CLIs, §5, §7). 1.7 applies the Step 6.1 and 6.2 review decisions (Q81–Q90: the BLE device transport, §5, §7; Q91–Q101: the BLE configurator transport, §5, §7). 1.8 applies D3, the phone page as the configurator for the hardware runs (Q102–Q113: §2, §7, §8). The submission writeup for Teton is [ARCHITECTURE.md](ARCHITECTURE.md), to be written at the end.
 
 ## 1. System overview
 
@@ -75,7 +75,13 @@ src/teton_configurator/
   ble_client.py               BLE transport (bleak): discovery + GATT
   sim_client.py               Unix-socket transport for --simulate
   ui_text.py                  plain-language strings, failure reason → message
-web/                          COULD: Web Bluetooth phone page
+web/                          the phone configurator for the hardware runs (plan_v5 D3)
+  index.html                  the screens; texts copied from ui_text.py into a marked block
+  protocol.js                 framing, handshake, envelopes, message checks (no DOM);
+                              constants copied from protocol.py into a marked block
+  test_protocol.mjs           Node test against tests/fixtures/web_vectors.json
+  test_client.mjs             Node test: the page's Client against DeviceService (socket)
+  package.json                only "type": "module" for Node; no dependencies
 deploy/                       SHOULD: systemd unit, polkit rule
 scripts/                      SHOULD: preflight check, hostapd Enterprise test AP
 tests/                        pytest suite (see §7)
@@ -298,6 +304,7 @@ async def run_flow(discover, connect, io, make_client=ProvisioningClient) -> int
 | transports | `test_transport_contract.py`: the same contract checks (info reads, ordered delivery, advertising and one-client rules, channel directions, 20-byte chunks, close) run against the memory pair and the socket pair (review Q71). `test_sim_transport.py`: the wire format, malformed records, stale and live socket files, one configurator at a time, discovery, and a handshake + scan through the real `ProvisioningClient` and `DeviceService` over the socket | none |
 | BLE device transport | `test_gatt_server.py`: the characteristic table, `local_name`, the `info` limit, and against a fake standing in for `_BlessGattServer`, the only code that touches `bless` (review Q87): no advertising after `start`, advertising toggles and repeats, `close` with advertising off and twice, ordered writes, `send` sets the value, refused directions and sizes, startup errors as `TransportError` | the real radio: Step 6.1 Verify |
 | BLE configurator transport | `test_ble_client.py`: RSSI to signal, the device list from scan results, no `bleak` import when building it, and a fake `bleak`-shaped client (review Q100): subscribe first, ordered notifications, `response=True`, missing service, send after a disconnect, idempotent close, errors as `TransportError` | the real radio: Step 6.2 Verify |
+| Phone page | `test_web.py`: the texts and constants copied into `web/` match `ui_text.py` and `protocol.py`; `tests/fixtures/web_vectors.json` matches what the Python code produces now; `web/test_protocol.mjs` (Node, skipped without `node`) runs `protocol.js` against the vectors: setup-code cases, framing, the handshake with fixed keys, envelopes both ways, the JSON encoding byte for byte (review Q105, Q108); `web/test_client.mjs` runs the page's `Client` against the real `DeviceService` over the simulation socket, wrong code to `provisioned` | the screens and the real radio: Step 6.2b Verify |
 | CLIs | argument parsing, `reset`/`show-code` rejected, `--state-dir`, `run --simulate` with injected buttons, no `bless`/`bleak` import in sim mode (fresh subprocess), a two-process smoke test: the device as a subprocess on a pseudo-terminal, the real `run_flow` with scripted answers over the socket; SIGTERM on the device process; Ctrl+C on the configurator process at the password prompt (review Q75, Q76, Q79, Q80) | none |
 | manual | real BLE + real Wi-Fi on the two laptops; `btmon` capture; Enterprise via hostapd | yes |
 
@@ -311,6 +318,8 @@ CI (SHOULD): GitHub Actions on `ubuntu-24.04` runs `ruff check`, `ruff format --
 | `structlog` | common | Structured JSON logs + redaction processor |
 | `bless` | device | BLE GATT server on BlueZ via D-Bus |
 | `bleak` | configurator | BLE client, cross-platform |
+
+Not a dependency: **Node.js 18+** runs `web/test_protocol.mjs` against the Python vectors, a dev-only check that the phone page's JavaScript matches the Python protocol; pytest skips it when `node` is missing (plan_v5 Q108). The page itself needs only Chrome.
 | `qrcode` | device | Terminal QR |
 | `pytest`, `pytest-asyncio`, `ruff` | dev | Tests and lint/format |
 

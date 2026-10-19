@@ -1,0 +1,95 @@
+{
+  "setup_codes": {
+    "valid": [
+      {
+        "typed": "7K2MQX9D4HTRB8WZ",
+        "code": "7K2MQX9D4HTRB8WZ"
+      },
+      {
+        "typed": "7k2m-qx9d-4htr-b8wz",
+        "code": "7K2MQX9D4HTRB8WZ"
+      },
+      {
+        "typed": " 7K2M QX9D 4HTR B8WZ ",
+        "code": "7K2MQX9D4HTRB8WZ"
+      },
+      {
+        "typed": "7K2M-QX9D\t4HTR-B8WZ\n",
+        "code": "7K2MQX9D4HTRB8WZ"
+      },
+      {
+        "typed": "OOOO-IIII-LLLL-oil0",
+        "code": "0000111111110110"
+      }
+    ],
+    "invalid": [
+      "",
+      "7K2M-QX9D-4HTR-B8W",
+      "7K2M-QX9D-4HTR-B8WZZ",
+      "7K2M-QX9D-4HTR-B8WU",
+      "7K2M-QX9D-4HTR-B8W*",
+      "7K2M_QX9D_4HTR_B8WZ"
+    ]
+  },
+  "framing": {
+    "payload_hex": "7b22736571223a322c226374223a224d66334c4e7376654d68613355664c4865696a306e4b414c663664454744746e7359443933474e725a413d3d227d",
+    "chunks_hex": [
+      "003d7b22736571223a322c226374223a224d6633",
+      "4c4e7376654d68613355664c4865696a306e4b41",
+      "4c663664454744746e7359443933474e725a413d",
+      "3d227d"
+    ],
+    "empty_chunks_hex": [
+      "0000"
+    ]
+  },
+  "handshake": {
+    "device_id": "TETON-3F9A2C",
+    "typed_code": "7k2m-qx9d-4htr-b8wz",
+    "wrong_code": "ZYXWVTSRQPNMKJHG",
+    "configurator_private_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "configurator_nonce_hex": "6465666768696a6b6c6d6e6f70717273",
+    "hello": "{\"type\":\"hello\",\"v\":1,\"pub\":\"B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=\",\"nonce\":\"ZGVmZ2hpamtsbW5vcHFycw==\"}",
+    "hello_reply": "{\"type\":\"hello_reply\",\"v\":1,\"device_id\":\"TETON-3F9A2C\",\"pub\":\"TVuribBzPZ2Nzs8E8yHJC3Ybd2WmvbK92/rT56vfH2Y=\",\"nonce\":\"MjM0NTY3ODk6Ozw9Pj9AQQ==\",\"confirm\":\"1Bs+dbjS0350QNLIk1darP5RwKSh85rI96QmGW3tBes=\"}",
+    "confirm": "{\"type\":\"confirm\",\"confirm\":\"65Xz0nmVVTRwHwyuplpzi91iIsszrTsNd82CIJN64MA=\"}",
+    "c2d_key_hex": "b65caf46994530188b158c0313e8b62cea55009e2a69974c9b98dbc22a8eaf08",
+    "d2c_key_hex": "3fe61c40983a3fcd251421842e0f07bc26de1d2ae911cb74c03baffc84089047"
+  },
+  "c2d": [
+    {
+      "plaintext": "{\"type\":\"scan\"}",
+      "envelope": "{\"seq\":0,\"ct\":\"osEsd9XsBgkptvvZyNJO3okGwTU+XOrrLyirvPo8qQ==\"}"
+    },
+    {
+      "plaintext": "{\"type\":\"set_credentials\",\"ssid\":\"Café-Home\",\"hidden\":false,\"security\":\"wpa2-psk\",\"psk\":\"correct-horse-battery\"}",
+      "envelope": "{\"seq\":1,\"ct\":\"T3cMAU8w/jGzRH/3ituUAA47if6PDF4i+xEQklonh4FK7/uMgv+AvuBGourwURoTfn1CohgGGV+dNNaSaqQ8uq+aozyVY8S/Xh5OOyTNlK8f+gt5bqFUQjz40RpHiQ9foa1BxzQaGPLFx9BA2F6wEodKYyoOQnuyj7Xb/Nozy4bM\"}"
+    }
+  ],
+  "d2c": [
+    {
+      "plaintext": "{\"type\":\"ready\"}",
+      "envelope": "{\"seq\":0,\"ct\":\"1x2KZL5qaC1rTyzzDyC+VXuDeN0rw9dKRI8QtdB0QPs=\"}"
+    },
+    {
+      "plaintext": "{\"type\":\"scan_result\",\"networks\":[{\"ssid\":\"Café-Home\",\"signal\":82,\"security\":\"wpa2-psk\"},{\"ssid\":\"Hospital\",\"signal\":64,\"security\":\"wpa2-eap-peap\"}]}",
+      "envelope": "{\"seq\":1,\"ct\":\"GOA83WRmAuuBz/snL+CTnuldxr2jWM3lM1isGrzjTPXh/VDz4dgbnL3YNxnjy0/qDRL9e60YNvPF9Hb52FEuMAQn0Z8QjLyJSqNdWy53JGBGFABMWerTA9Oml1GuJ7vvgvh6MZ6rbX7KRBF9Ty4YlnhXq6hZYCzbemUJ7G/8WPheHKhU70dwNn/TmawRjTTOfcNePj30C/rj3jKi3OnFyu/Ek1MOEw==\"}"
+    },
+    {
+      "plaintext": "{\"type\":\"status\",\"state\":\"connecting\"}",
+      "envelope": "{\"seq\":2,\"ct\":\"ZGGlfMKvDHyeD3ShsDRkF76CemFBuSmMHez7toBkwaMIj70bkdRmqn0A7yAqyNQ9hdAZ26wy\"}"
+    },
+    {
+      "plaintext": "{\"type\":\"status\",\"state\":\"failed\",\"reason\":\"wrong_password\"}",
+      "envelope": "{\"seq\":3,\"ct\":\"RVHphKU0hqA7jxa57nyRY5kBk7AALb0oz1uCn7bSZ3lcW+rO915VjxiGEaAyqdvmQNCb0Fg1Snf0ZqCm9wDCNGC/72qv4c/qnPPoGQ==\"}"
+    },
+    {
+      "plaintext": "{\"type\":\"status\",\"state\":\"connected\",\"ip\":\"192.168.43.17\",\"internet\":\"full\",\"warnings\":[\"limited_internet\"]}",
+      "envelope": "{\"seq\":4,\"ct\":\"WMidt6Abd5fD1ZqEu/qDuJDCpmroF/hwuhDrc6Ep3T0RnpDfCoJWxbPP2pJyTtF8Yg6KIGD32ZFDsAkYiRpxp2OJNP7WjJ63UX/jVhMsMuWSsitJTSNHlVP+I2uf3ERZhBmKhE/laHMKyfBjwb7SATZKxV/ZH4/Uj+X+dA==\"}"
+    },
+    {
+      "plaintext": "{\"type\":\"error\",\"code\":\"unsupported_security\"}",
+      "envelope": "{\"seq\":5,\"ct\":\"cCVxIzbje1u3Urt4zwQP8oyjRCdF0L4OSLZ18FbwH38nGGKv2WK4yAaVCxomQYYoe8UkFoC0h90FbP0cNHo=\"}"
+    }
+  ],
+  "info": "{\"v\":1,\"device_id\":\"TETON-3F9A2C\",\"name\":\"Teton-9A2C\",\"state\":\"advertising\",\"caps\":[\"wpa2-psk\",\"wpa3-sae\",\"wpa2-eap-peap\"]}"
+}

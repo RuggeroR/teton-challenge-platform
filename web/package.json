@@ -1,0 +1,5 @@
+{
+  "description": "Not an npm package and no dependencies: this only tells Node that the .js files here are ES modules, as the browser loads them (web/test_*.mjs import protocol.js).",
+  "private": true,
+  "type": "module"
+}

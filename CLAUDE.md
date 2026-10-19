@@ -59,17 +59,17 @@ Rules:
 
 ## Status
 
-Phases 1 to 5 of `docs/IMPLEMENTATION_PLAN.md` are done, plus Steps 6.1 and 6.2 (code; 6.2's hardware Verify pending) and most of Phase 0 (770 tests pass):
+Phases 1 to 5 of `docs/IMPLEMENTATION_PLAN.md` are done, plus Steps 6.1, 6.2 (code only) and 6.2b (code; phone Verify pending), and most of Phase 0 (796 tests pass):
 
-- **Phase 0:** tooling and the BLE spike are done; the spike results are in the plan. Step 0.3, the laptop B install check on Python 3.14, has no results recorded yet.
+- **Phase 0:** tooling and the BLE spike are done; the spike results are in the plan. Step 0.3 (laptop B on Python 3.14) was not run: laptop 2's disk failed (D3), so Python 3.14 is untested.
 - **Phase 1:** `teton_common` is complete: protocol, setup code, messages, framing, crypto, log, transport and the memory transport.
 - **Phase 2:** the device core is complete: `state.py`, `storage.py`, `qr.py`, the Wi-Fi backend (`wifi/*`, real `nmcli` checks of Step 2.5 run on laptop 1), `session.py`, `buttons.py` and `service.py`.
 - **Phase 3:** the configurator core is complete: `ui_text.py`, `client.py` (`ClientChannel` + `ProvisioningClient`) and `flow.py` (`run_flow` with injected `discover`/`connect`/`io`).
 - **Phase 4:** `tests/test_end_to_end.py` (the real `DeviceService` + the real `run_flow` in memory) and `tests/test_no_secrets_in_logs.py` (one run through the real `configure_logging`, keys caught by spies in `crypto`, `NmcliBackend` through the real runner). Shared fixtures are in `tests/conftest.py`.
 - **Phase 5:** the simulation transports (`teton_common/sim_wire.py`, `sim_server.py`, `sim_client.py`; the contract tests in `test_transport_contract.py` run on both pairs) and the two CLIs (`teton-device run [--simulate]`, `teton-configurator [--simulate]`). The README has the two-terminal sim quickstart.
 
-Every review question up to Q101 is decided and recorded in `plan_v5.md`. Only Q16 (CI earlier) is open.
+Every review question up to Q113 is decided and recorded in `plan_v5.md`. Q16 (CI earlier) is settled by Q113: CI is deferred with all of Phase 7.
 
-**Phase 6 in progress:** Step 6.1 is done: `gatt_server.py` (`GattServerTransport` over `_BlessGattServer`, the only code touching `bless`). Step 6.2's code is done: `ble_client.py` (`BleDiscovery` + `BleClientTransport`, `bleak` imported only when scanning or connecting), and both CLIs use Bluetooth without `--simulate`. The reassembly timeout now counts from the last chunk (Q94). Still to do on hardware: Step 0.3 on laptop 2, then Step 6.2's Verify across both laptops, then Step 6.3 (real Wi-Fi and evidence).
+**Phase 6 in progress:** Step 6.1 is done and verified on hardware: `gatt_server.py`. Step 6.2's code is done (`ble_client.py`, both CLIs on Bluetooth without `--simulate`) but **laptop 2's disk failed on 2026-10-19 (plan_v5 D3)**, so it is tested with fakes only. **The phone page replaces laptop 2 for the hardware runs (Step 6.2b):** `web/index.html` (screens) + `web/protocol.js` (the protocol in JavaScript, WebCrypto only). `ui_text.py` and `protocol.py` stay the single source: `python tests/web_data.py` copies texts and constants into `web/` and writes `tests/fixtures/web_vectors.json`; `tests/test_web.py` checks all three are current and runs the Node tests (`web/test_protocol.mjs` against the vectors, `web/test_client.mjs` against the real `DeviceService` over the socket; skipped without `node`). Next: Step 6.2b's Verify on the phone, then Step 6.3 (real Wi-Fi and evidence, with the phone). Phase 7 (CI, Enterprise, systemd) is deferred; 7.2 is not possible without laptop 2.
 
 `tests/conftest.py` holds only fixtures (`device`, `paired_device`, `ends` and `make_ends` over both transports, `state_dir`, `log_stream`). `tests/fake_configurator.py` holds the shared test helpers: a low-level `Configurator` built on the real `ClientChannel`, the `Device` rig (a running `DeviceService` with the memory transport, fake Wi-Fi, `QueueButtons` and `FakeTime`, plus `led()`), `FakeTime`, `Wire`, `ScriptedIO` and the recording Wi-Fi backends. `tests/fake_nmcli.py` holds the fake nmcli runner.

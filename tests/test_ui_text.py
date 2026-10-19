@@ -51,6 +51,11 @@ def failure_texts() -> list[str]:
         *INPUT_CHECKS,
         ui_text.NO_DEVICE_FOUND,
         ui_text.NO_NETWORKS,
+        ui_text.BLUETOOTH_UNAVAILABLE,
+        ui_text.PAGE_UNSUPPORTED,
+        ui_text.PAGE_STOPPED,
+        ui_text.PAGE_NO_NETWORKS,
+        ui_text.PAGE_ENTERPRISE,
     ]
 
 
