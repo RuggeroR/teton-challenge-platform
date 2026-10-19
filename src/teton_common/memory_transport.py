@@ -6,8 +6,6 @@
 # handling a message, which BLE never does. It also enforces the BLE rules (who may send on
 # which channel, 20-byte chunks), so a bug fails here instead of only on hardware.
 
-import asyncio
-import contextlib
 
 import structlog
 
@@ -15,64 +13,21 @@ from teton_common.protocol import Channel
 from teton_common.transport import (
     CLIENT_SENDS,
     DEVICE_SENDS,
+    Inbox,
     Receiver,
     TransportError,
     check_chunk,
+    check_info,
 )
 
 log = structlog.get_logger()
-
-
-class _Inbox:
-    """Incoming chunks for one end, delivered in order by a background task."""
-
-    def __init__(self, receives: frozenset[Channel], side: str) -> None:
-        self._receives = receives
-        self._side = side
-        self._receivers: dict[Channel, Receiver] = {}
-        self._queue: asyncio.Queue[tuple[Channel, bytes]] = asyncio.Queue()
-        self._task: asyncio.Task[None] | None = None
-
-    def on_receive(self, channel: Channel, cb: Receiver) -> None:
-        if channel not in self._receives:
-            raise TransportError(f"the {self._side} does not receive on {channel}")
-        self._receivers[channel] = cb
-
-    def put(self, channel: Channel, chunk: bytes) -> None:
-        self._queue.put_nowait((channel, chunk))
-
-    def start(self) -> None:
-        if self._task is None:
-            self._task = asyncio.create_task(self._deliver())
-
-    async def stop(self) -> None:
-        task, self._task = self._task, None
-        self._queue = asyncio.Queue()  # chunks of an old connection never reach a new one
-        if task is None:
-            return
-        task.cancel()
-        if task is not asyncio.current_task():
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-    async def _deliver(self) -> None:
-        while True:
-            channel, chunk = await self._queue.get()
-            cb = self._receivers.get(channel)
-            if cb is None:
-                continue  # nobody listening, like a notify nobody subscribed to
-            try:
-                await cb(chunk)
-            except Exception:
-                # One failing callback must not silently stop all later deliveries.
-                log.exception("receiver_failed", side=self._side, channel=channel)
 
 
 class MemoryDeviceTransport:
     """Device end of an in-memory pair. Implements DeviceTransport."""
 
     def __init__(self) -> None:
-        self._inbox = _Inbox(receives=CLIENT_SENDS, side="device")
+        self._inbox = Inbox(receives=CLIENT_SENDS, side="device")
         self._info = b""
         self._started = False
         self._advertising = False
@@ -91,6 +46,7 @@ class MemoryDeviceTransport:
         self._advertising = on  # a connected client stays connected
 
     def set_info(self, data: bytes) -> None:
+        check_info(data)
         self._info = bytes(data)
 
     def on_receive(self, channel: Channel, cb: Receiver) -> None:
@@ -129,7 +85,7 @@ class MemoryClientTransport:
 
     def __init__(self, device: MemoryDeviceTransport) -> None:
         self._device = device
-        self._inbox = _Inbox(receives=DEVICE_SENDS, side="configurator")
+        self._inbox = Inbox(receives=DEVICE_SENDS, side="configurator")
         self._connected = False
 
     async def connect(self) -> None:

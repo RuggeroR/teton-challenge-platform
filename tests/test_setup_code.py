@@ -36,15 +36,24 @@ def test_format_then_normalize_round_trip() -> None:
     assert sc.normalize(sc.format_code(code)) == code
 
 
-@pytest.mark.parametrize(
-    "typed",
-    [
-        "7K2MQX9D4HTRB8WZ",
-        "7k2m-qx9d-4htr-b8wz",
-        " 7K2M QX9D 4HTR B8WZ ",
-        "7K2M-QX9D\t4HTR-B8WZ\n",
-    ],
-)
+# Shared with the phone page's test through tests/web_data.py (review Q111).
+TYPING_VARIANTS = [
+    "7K2MQX9D4HTRB8WZ",
+    "7k2m-qx9d-4htr-b8wz",
+    " 7K2M QX9D 4HTR B8WZ ",
+    "7K2M-QX9D\t4HTR-B8WZ\n",
+]
+INVALID_CODES = [
+    "",
+    "7K2M-QX9D-4HTR-B8W",  # 15 characters
+    "7K2M-QX9D-4HTR-B8WZZ",  # 17 characters
+    "7K2M-QX9D-4HTR-B8WU",  # U is not in the alphabet
+    "7K2M-QX9D-4HTR-B8W*",  # symbol
+    "7K2M_QX9D_4HTR_B8WZ",  # underscores are not separators
+]
+
+
+@pytest.mark.parametrize("typed", TYPING_VARIANTS)
 def test_normalize_accepts_common_typing_variants(typed: str) -> None:
     assert sc.normalize(typed) == "7K2MQX9D4HTRB8WZ"
 
@@ -54,17 +63,7 @@ def test_normalize_maps_look_alike_letters() -> None:
     assert sc.normalize("OOOO-IIII-LLLL-oil0") == "0000111111110110"
 
 
-@pytest.mark.parametrize(
-    "typed",
-    [
-        "",
-        "7K2M-QX9D-4HTR-B8W",  # 15 characters
-        "7K2M-QX9D-4HTR-B8WZZ",  # 17 characters
-        "7K2M-QX9D-4HTR-B8WU",  # U is not in the alphabet
-        "7K2M-QX9D-4HTR-B8W*",  # symbol
-        "7K2M_QX9D_4HTR_B8WZ",  # underscores are not separators
-    ],
-)
+@pytest.mark.parametrize("typed", INVALID_CODES)
 def test_normalize_rejects_invalid_input(typed: str) -> None:
     with pytest.raises(InvalidSetupCode):
         sc.normalize(typed)

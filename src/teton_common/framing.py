@@ -39,7 +39,7 @@ class Reassembler:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._buffer = b""
-        self._started_at = 0.0  # when the first chunk of the current message arrived
+        self._last_chunk_at = 0.0  # when the latest chunk of the current message arrived
 
     def reset(self) -> None:
         """Drop any partial message (new session, error)."""
@@ -49,12 +49,13 @@ class Reassembler:
         """Add one chunk. Returns the payload when the message is complete, else None."""
         now = self._clock()
         # Checked lazily: a stale partial message only matters when the next chunk arrives.
-        if self._buffer and now - self._started_at > REASSEMBLY_TIMEOUT_S:
+        # Counted from the last chunk, not the first: over BLE a large message can take more
+        # than 10 s while it keeps arriving (review Q94).
+        if self._buffer and now - self._last_chunk_at > REASSEMBLY_TIMEOUT_S:
             self.reset()
         if not chunk:
             self._fail("empty chunk")
-        if not self._buffer:
-            self._started_at = now
+        self._last_chunk_at = now
         self._buffer += chunk
 
         if len(self._buffer) < HEADER_BYTES:

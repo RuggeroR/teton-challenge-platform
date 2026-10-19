@@ -1,8 +1,8 @@
 # Tests for the two CLIs, which only wire components (review Q79): argument parsing, the
-# state directory, the simulated device run with injected buttons, the missing BLE
-# transport, startup errors, no bless/bleak import in simulation, and the real processes:
-# a two-process smoke test over the socket (review Q80), SIGTERM on the device (Q76) and
-# Ctrl+C on the configurator (Q75).
+# state directory, the simulated device run with injected buttons, the radio and Wi-Fi each
+# mode uses, Bluetooth off on the configurator, startup errors, no bless/bleak import
+# in simulation, and the real processes: a two-process smoke test over the socket (review
+# Q80), SIGTERM on the device (Q76) and Ctrl+C on the configurator (Q75).
 #
 # The subprocess tests read output with a deadline instead of sleeping: each step waits
 # for the line that shows the previous one has happened.
@@ -31,12 +31,15 @@ from teton_common.sim_wire import SOCKET_NAME
 from teton_common.transport import TransportError
 from teton_configurator import cli as configurator_cli
 from teton_configurator import sim_client, ui_text
+from teton_configurator.ble_client import BleDiscovery
 from teton_configurator.flow import FoundDevice, run_flow
 from teton_device import cli as device_cli
 from teton_device.buttons import Button, QueueButtons
+from teton_device.gatt_server import GattServerTransport
 from teton_device.sim_server import SimServerTransport
 from teton_device.storage import DEFAULT_STATE_DIR, Storage
-from teton_device.wifi.fake import HOME_PSK_PASSWORD
+from teton_device.wifi.fake import HOME_PSK_PASSWORD, FakeWifiBackend
+from teton_device.wifi.nmcli import NmcliBackend
 
 WAIT_S = 15  # real seconds; a step normally takes well under one (the fake Wi-Fi: 2 + 3 s)
 
@@ -119,25 +122,59 @@ def test_configurator_rejects_unknown_arguments(capsys: pytest.CaptureFixture[st
     assert "unrecognized arguments" in capsys.readouterr().err
 
 
-# --- no BLE yet --------------------------------------------------------------------------
+# --- the radio and Wi-Fi each mode uses -------------------------------------------------
 
 
-def test_device_without_simulate_says_ble_is_not_available(
+def test_without_simulate_the_device_uses_bluetooth_and_networkmanager(tmp_path: Path) -> None:
+    """The BLE name comes from the stored device ID (review Q81); NetworkManager keeps CA
+    certificates under --state-dir (Q88)."""
+    seed_state(tmp_path)
+    args = device_args("--state-dir", str(tmp_path))
+    transport, wifi = device_cli.radio_and_wifi(args, Storage(tmp_path))
+    assert isinstance(transport, GattServerTransport)
+    assert transport.name == "Teton-9A2C"
+    assert isinstance(wifi, NmcliBackend)
+    assert wifi._certs == tmp_path / "certs"
+
+
+def test_with_simulate_the_device_uses_the_socket_and_fake_wifi(
+    tmp_path: Path, runtime_dir: Path
+) -> None:
+    args = device_args("--simulate", "--state-dir", str(tmp_path))
+    transport, wifi = device_cli.radio_and_wifi(args, Storage(tmp_path))
+    assert isinstance(transport, SimServerTransport)
+    assert transport.path == runtime_dir / SOCKET_NAME
+    assert isinstance(wifi, FakeWifiBackend)
+    assert not (tmp_path / "state.json").exists()  # the simulation loads it in the service
+
+
+def test_without_simulate_a_corrupt_state_file_is_one_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    state_dir = tmp_path / "state"
-    assert device_cli.main(["run", "--state-dir", str(state_dir)]) == 1
-    out = capsys.readouterr()
-    assert "BLE transport not available yet" in out.err
-    assert out.out == ""
-    assert not state_dir.exists()  # checked before anything is created
+    """The BLE path loads the state before the service does (review Q81); the same one line."""
+    (tmp_path / "state.json").write_text("{not json")
+    assert device_cli.main(["run", "--state-dir", str(tmp_path)]) == 1
+    assert capsys.readouterr().err.splitlines()[-1].endswith("is not readable JSON")
 
 
-def test_configurator_without_simulate_says_ble_is_not_available(
-    capsys: pytest.CaptureFixture[str],
+def test_without_simulate_the_configurator_uses_ble_discovery() -> None:
+    discover, connect = configurator_cli._radio(simulate=False)
+    assert isinstance(discover.__self__, BleDiscovery)  # type: ignore[attr-defined]
+    assert connect.__self__ is discover.__self__  # type: ignore[attr-defined]
+
+
+async def test_bluetooth_off_is_one_sentence_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert configurator_cli.main([]) == 1
-    assert "BLE transport not available yet" in capsys.readouterr().err
+    """No adapter or Bluetooth off: the technician gets one plain sentence (review Q99)."""
+
+    async def no_bluetooth(seconds: float) -> list[tuple[object, object]]:
+        raise OSError("org.bluez.Error.NotReady: Resource Not Ready")
+
+    monkeypatch.setattr(configurator_cli, "BleDiscovery", lambda: BleDiscovery(no_bluetooth))
+    io = ScriptedIO()
+    assert await configurator_cli.run_configurator(configurator_cli.parse_args([]), io) == 1
+    assert io.lines[-1] == ui_text.BLUETOOTH_UNAVAILABLE
 
 
 # --- the simulated device, in this process ------------------------------------------------
@@ -221,6 +258,7 @@ import asyncio, sys
 from teton_configurator import cli as configurator_cli
 from teton_device import cli as device_cli
 from teton_device.buttons import Button, QueueButtons
+from teton_device.gatt_server import GattServerTransport
 
 class Quit:
     async def ask(self, prompt): raise EOFError

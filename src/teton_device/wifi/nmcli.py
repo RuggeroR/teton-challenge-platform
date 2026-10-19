@@ -233,6 +233,11 @@ def parse_device_show(stdout: str) -> DeviceShow:
 
 
 # Substrings of nmcli / NetworkManager 1.46 messages (lowercase), checked in this order.
+# Recorded on laptop 1 (Step 6.3, review Q119): with a wrong PSK, NetworkManager asks nmcli
+# for the key again, nmcli can't ask without --ask, and `up` runs into --wait. The warning is
+# printed only when NetworkManager asks again, i.e. when the network rejected the key, so it
+# wins over the timeout exit code.
+_ASKED_AGAIN = ("not given in 'passwd-file'",)
 _REJECTED = ("secrets were required", "supplicant")  # wrong PSK, or 802.1X login refused
 _NOT_FOUND = ("could not be found", "no network with ssid")
 _NO_IP = ("ip configuration could not be reserved", "dhcp")
@@ -242,6 +247,8 @@ def map_failure(returncode: int, output: str, creds: Credentials) -> FailureReas
     """nmcli's error -> a SPEC §7 reason. A heuristic: anything we don't recognise is a
     `timeout`, and the raw text is only in the debug log (written by run())."""
     text = output.lower()
+    if any(s in text for s in _ASKED_AGAIN):
+        return rejected_reason(creds)  # before the timeout: the key was refused (Q119)
     if returncode == EXIT_TIMEOUT:
         return FailureReason.TIMEOUT
     if any(s in text for s in _REJECTED):

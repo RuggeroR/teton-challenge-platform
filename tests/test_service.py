@@ -217,6 +217,15 @@ async def test_old_code_stops_working_after_reset(device: Device) -> None:
         device.configurator.handshake.on_hello_reply(reply)
 
 
+async def test_reset_without_a_session_logs_no_protocol_error(device: Device) -> None:
+    """[R][R] on an idle device is not a protocol error (review Q120)."""
+    with capture_logs() as logs:
+        await device.press(Button.RESET, Button.RESET)
+    events = [entry["event"] for entry in logs]
+    assert "device_reset" in events
+    assert "protocol_error" not in events
+
+
 async def test_reset_mid_session_drops_the_session(device: Device) -> None:
     await pair_and_establish(device)
     await device.press(Button.RESET, Button.RESET)

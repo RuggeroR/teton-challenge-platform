@@ -16,6 +16,12 @@ DEVICE_ID_PREFIX: Final = "TETON-"  # + 6 uppercase hex characters (SPEC §3)
 LOCAL_NAME_PREFIX: Final = "Teton-"  # + last 4 characters of the device ID (SPEC §3)
 
 
+def local_name(device_id: str) -> str:
+    """The BLE local name, e.g. TETON-3F9A2C -> Teton-9A2C (SPEC §3). Used by Info.name and
+    by the CLI, which hands it to the BLE transport (review Q81)."""
+    return LOCAL_NAME_PREFIX + device_id[-4:]
+
+
 class Channel(StrEnum):
     """The four logical channels; over BLE each is one GATT characteristic (SPEC §4)."""
 
@@ -124,7 +130,9 @@ MAX_MESSAGE_BYTES: Final = 8192  # fits a CA certificate PEM (SPEC §4.1)
 # the PEM; 4096 keeps a margin for the other fields. A typical CA PEM is 1.2-2 KB.
 MAX_CA_PEM_BYTES: Final = 4096
 MAX_INFO_BYTES: Final = 180  # `info` must fit in a single GATT read (SPEC §4.1)
-REASSEMBLY_TIMEOUT_S: Final = 10  # drop a partial message after this (SPEC §4.1)
+REASSEMBLY_TIMEOUT_S: Final = (
+    10  # drop a partial message with no new chunk for this long (SPEC §4.1, Q94)
+)
 SESSION_IDLE_TIMEOUT_S: Final = 300  # end a session without traffic (SPEC §5.4)
 CONNECT_TIMEOUT_S: Final = 45  # Wi-Fi activation limit (SPEC §7, §8.3)
 VERIFY_TIMEOUT_S: Final = 15  # IP, connectivity check and gateway ping, after activation (Q10)

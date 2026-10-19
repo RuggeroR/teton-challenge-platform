@@ -1,6 +1,6 @@
 # Teton Wi-Fi Provisioning: Specification
 
-Version 1.6, 2026-10-18. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code); 1.5 applies the Phase 3 review decisions so far (Q26: `auth_failed` text; Q27, Q28: configurator-side failures and input checks; Q30: network list markers; Q31, Q32: configurator waits; Q38–Q47: the guided flow, CA file limit); 1.6 applies the Phase 5 review decisions (Q64–Q72: the simulation transport, §5.4, §10; Q73, Q74: logs on stderr, §9, §11; Q75, Q76: Ctrl+C and SIGTERM, §9; Q77: the sim state dir, §3; Q78: fake Wi-Fi delays, §10; Q65: what simulation is used for, §10, §12). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
+Version 1.8, 2026-10-19. Derived from [plan_v5.md](plan_v5.md), which records why each decision was made. 1.1 applied the v4 → v5 changes (redaction keys, secrets off the command line, success rule, per-interface checks); 1.2 applied the post-spike simplifications S1–S4 (no `busy`, fixed 20-byte chunks, no connection tracking, exit after success); 1.3 applies D1 (device on 24.04, configurator on 24.04 or 26.04) and D2 (no text input on the device, simulated buttons and LED, pairing window, the device stays on after success); 1.4 applies the Phase 2 review decisions (Q13: device states; Q14: no dashes in the QR; Q4, Q5, Q6, Q22: handshake counting, `rate_limited`, `bad_request`, `hello` only while the window is open; Q24: `forget_all`; Q10: 45 s + 15 s; Q11: security types; Q17: autoconnect priority; Q21: reset in any state but connecting; Q23: no terminal, [S] shows the code); 1.5 applies the Phase 3 review decisions so far (Q26: `auth_failed` text; Q27, Q28: configurator-side failures and input checks; Q30: network list markers; Q31, Q32: configurator waits; Q38–Q47: the guided flow, CA file limit); 1.6 applies the Phase 5 review decisions (Q64–Q72: the simulation transport, §5.4, §10; Q73, Q74: logs on stderr, §9, §11; Q75, Q76: Ctrl+C and SIGTERM, §9; Q77: the sim state dir, §3; Q78: fake Wi-Fi delays, §10; Q65: what simulation is used for, §10, §12). 1.7 applies the Step 6.1 and 6.2 review decisions (Q90: the adapter alias, §4; Q84: Bluetooth startup errors, §9.1; Q94: the reassembly timeout counts from the last chunk, §4.1; Q91–Q93, Q99: discovery, signal and Bluetooth off on the configurator, §9.2). 1.8 applies D3, the loss of laptop 2 (Q102–Q113: the phone page as the configurator for the hardware runs, §9.3, §12), and Q119: how a rejected key is recognised (§7). If this spec and the plan disagree, the plan wins. Fix the spec, and record any new decision in a new `plan_vN.md`.
 
 Key words: **MUST** = required for the submission, **SHOULD** = planned, **COULD** = only if time allows.
 
@@ -56,13 +56,15 @@ Service UUID: `18388b82-f3e5-40bb-a9b9-fd0f9d789b62`, included in advertisements
 
 No OS-level Bluetooth pairing or bonding is used (decision Q2).
 
+The advertisement carries the local name (`Teton-` + last 4 characters of `device_id`) and the service UUID. While it advertises, `bless` also sets the adapter's alias (the laptop's visible Bluetooth name) to the local name; stopping advertising restores it (review Q90).
+
 ### 4.1 Framing
 
 Every message on `session`, `command` and `status` is UTF-8 JSON, framed as `[u16 big-endian payload length][payload]` (the length counts the payload only, not the 2-byte prefix), split into chunks of at most **20 bytes**. The receiver reassembles the chunks per characteristic. `info` is a single GATT read of raw JSON and is not framed.
 - The chunk size is fixed at 20 bytes, the minimum every BLE link supports, so no MTU negotiation is needed (plan_v5, S2). Production would use the negotiated MTU − 3 (517 measured in the spike).
 - `info` must stay under 180 bytes, so it fits in one read with the MTU that Android and BlueZ negotiate automatically.
 - Maximum message size: 8192 bytes. Larger messages are an error. The limit applies to the framed envelope, where base64 of the ciphertext adds a third, so a `set_credentials` with a CA certificate allows a PEM of at most 4096 bytes (`MAX_CA_PEM_BYTES`, review Q43); a typical CA PEM is 1.2–2 KB.
-- A reassembly buffer is reset when a message is incomplete for 10 s, and when a new session starts.
+- A reassembly buffer is reset when a message has made no progress for 10 s (no chunk since the last one; review Q94), and when a new session starts. Over BLE, write-with-response moves about 20–30 chunks a second, so a large message can take longer than 10 s in total.
 
 ## 5. Security protocol
 
@@ -154,7 +156,7 @@ There is no reset command over BLE. Reset is the physical [R] button only (decis
 
 | `reason` | Detected by | Configurator message (plain language) |
 |---|---|---|
-| `wrong_password` | `nmcli` reports secrets required / 4-way handshake failure | "The Wi-Fi password was not accepted. Check it and try again." |
+| `wrong_password` | `nmcli` reports secrets required / 4-way handshake failure, or NetworkManager asks for the key again during activation (`… not given in 'passwd-file'`), which on NetworkManager 1.46 ends in the 45 s `--wait` timeout (review Q119) | "The Wi-Fi password was not accepted. Check it and try again." |
 | `ssid_not_found` | `nmcli` "No network with SSID" | "The device can't see this network. Move closer or check the name." |
 | `auth_failed` | 802.1X failure on Enterprise | "The username or password was rejected by the network. Check them and try again." |
 | `no_ip` | activated, but no IPv4 address within the timeout | "Connected to Wi-Fi but the network gave no address. Contact IT." |
@@ -183,7 +185,7 @@ The device has no keyboard input beyond a few simulated physical buttons and a s
 
 | Command | Behaviour |
 |---|---|
-| `teton-device run` | Load or create the state, print the code + QR + demo note, then wait for buttons. **An unprovisioned device does not advertise until [P] is pressed.** Serves sessions while the pairing window is open. The screen (code, QR, LED, messages) is on stdout and the logs on stderr (review Q73). After a successful provisioning it stops advertising and stays on in `PROVISIONED` (green LED). Started on an already provisioned device, it stays on without advertising. Exits only on [Q], Ctrl+C or SIGTERM (review Q76) |
+| `teton-device run` | Load or create the state, print the code + QR + demo note, then wait for buttons. **An unprovisioned device does not advertise until [P] is pressed.** Serves sessions while the pairing window is open. The screen (code, QR, LED, messages) is on stdout and the logs on stderr (review Q73). After a successful provisioning it stops advertising and stays on in `PROVISIONED` (green LED). Started on an already provisioned device, it stays on without advertising. Exits only on [Q], Ctrl+C or SIGTERM (review Q76). If Bluetooth can't start (no adapter, `bluetoothd` not running), it prints one line and exits 1 (review Q84) |
 | `teton-device run --simulate` | Same, with the same buttons, but over a local Unix socket with the fake Wi-Fi backend (§10) |
 | `--state-dir PATH` | Override the state directory (default §3) |
 | `--verbose` | `DEBUG` logging (§11) |
@@ -227,11 +229,17 @@ Every text the technician sees lives in `teton_configurator/ui_text.py` and is o
 
 How long the configurator waits (review Q31, Q32): 10 s for each handshake reply (no reply means the pairing window is closed: "Press the pairing button on the device and try again."), 40 s for a scan result, 10 s for `connecting` after `set_credentials`, then 70 s for the result (Q10).
 
-`--simulate` connects to the simulated device instead of BLE. `--verbose` shows `DEBUG` logs (on stderr). Ctrl+C stops at any point: the connection is closed, the terminal settings are restored and the exit code is 130 (review Q46, Q75).
+Over BLE the device signal is `2 × (RSSI + 100)` clamped to 0–100, the scale NetworkManager uses for Wi-Fi (review Q91). If Bluetooth is off or missing on the configurator, it says so in one sentence and exits 1 (review Q99). `--simulate` connects to the simulated device instead of BLE. `--verbose` shows `DEBUG` logs (on stderr). Ctrl+C stops at any point: the connection is closed, the terminal settings are restored and the exit code is 130 (review Q46, Q75).
 
-### 9.3 Phone page (COULD)
+### 9.3 Phone page (the configurator for the hardware runs, plan_v5 D3)
 
-A single `web/index.html` using Web Bluetooth and WebCrypto that implements the same protocol, for Chrome on Android. No framework.
+Laptop 2 was lost (plan_v5 D3), so the hardware runs use a phone page instead: `web/index.html` (the screens) and `web/protocol.js` (framing, handshake, envelopes and message checks, no DOM), for Chrome on Android, using Web Bluetooth and WebCrypto only. No framework, no npm packages, no JavaScript crypto library (review Q106, Q107).
+
+- It speaks the protocol of §4–§6 unchanged; the device doesn't know which configurator it talks to.
+- Steps (review Q103, Q104): press [P] on the device, then **Find the device** opens Chrome's own picker, filtered by the service UUID; then the setup code (a wrong code is retyped, rate limited shows the seconds), the device's scan list, and the password for a WPA2/WPA3 password network, with try again / pick another network / quit after a failure. Hidden networks and Enterprise are not on the page: Enterprise networks are listed greyed out with a sentence pointing to the laptop configurator.
+- Every text comes from `ui_text.py`, copied into the page by a script and checked by a test (review Q105). The waits are those of §9.2; a Bluetooth disconnect shows "connection lost" at once (review Q110). Input is checked before sending, as in §9.2 (review Q111).
+- The device's `confirm` is checked with `crypto.subtle.verify("HMAC", …)`, a constant-time comparison (§5.1). A browser without Web Bluetooth or WebCrypto X25519 gets one sentence and nothing else.
+- Served from laptop 1 over HTTP for the demo, with Chrome's "insecure origins treated as secure" flag set for that address (review Q109). A page served over plain HTTP could be swapped by someone on the same network; production would serve it over HTTPS or ship an app.
 
 ## 10. Simulation mode (SHOULD)
 
@@ -250,7 +258,7 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 ## 12. Acceptance criteria
 
 **MUST**
-1. With laptop A on Ubuntu 24.04 and laptop B on Ubuntu 24.04 or 26.04, a technician following the README provisions laptop A onto a phone hotspot (WPA2-PSK) using only the guided configurator and the device's [P] button. The device advertises nothing until [P] is pressed, and stops when the pairing window expires.
+1. With laptop A on Ubuntu 24.04 and laptop B on Ubuntu 24.04 or 26.04, **or a phone with Chrome running the phone page (§9.3, plan_v5 D3)**, a technician following the README provisions laptop A onto a phone hotspot (WPA2-PSK) using only the guided configurator and the device's [P] button. The device advertises nothing until [P] is pressed, and stops when the pairing window expires.
 2. The configurator shows `connected` with an IP and confirmed internet access.
 3. A wrong password produces `wrong_password`, and the retry works within the same session.
 4. A wrong setup code fails the handshake with a clear message. No credentials are sent.
@@ -259,10 +267,10 @@ A single `web/index.html` using Web Bluetooth and WebCrypto that implements the 
 7. README, ARCHITECTURE.md (writeup) and evidence (logs and screenshots) are in the repo.
 
 **SHOULD**
-8. `--simulate` runs the full flow on one machine, and a two-process smoke test runs it in CI (GitHub Actions: ruff + pytest on Python 3.12 and 3.14).
-9. WPA2-Enterprise PEAP is verified against `hostapd` on laptop B, with the config files in `scripts/hostapd-enterprise/`.
+8. `--simulate` runs the full flow on one machine, and a two-process smoke test runs it in CI (GitHub Actions: ruff + pytest on Python 3.12 and 3.14). CI is deferred (review Q113).
+9. ~~WPA2-Enterprise PEAP is verified against `hostapd` on laptop B, with the config files in `scripts/hostapd-enterprise/`.~~ Not possible without laptop 2 (review Q112).
 10. A `deploy/` systemd unit and polkit rule, plus `scripts/preflight.sh` that checks the adapter, BlueZ, NetworkManager and Python versions.
 
 **COULD**
-11. The phone page (§9.3).
+11. ~~The phone page (§9.3).~~ Built as the configurator for the hardware runs (plan_v5 D3).
 12. EAP-TLS, `.deb` packaging, Prometheus metrics and a Smith enrollment stub.

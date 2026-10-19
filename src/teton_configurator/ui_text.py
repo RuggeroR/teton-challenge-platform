@@ -21,6 +21,9 @@ from teton_common.protocol import (
 PRESS_PAIRING_BUTTON = "Press the pairing button on the device. Its light starts blinking blue."
 LOOKING_FOR_DEVICES = "Looking for devices..."
 NO_DEVICE_FOUND = "No device found. Press the pairing button on the device and try again."
+BLUETOOTH_UNAVAILABLE = (  # review Q99
+    "Bluetooth is off or missing on this computer. Turn it on and run the configurator again."
+)
 ASK_SETUP_CODE = "Setup code (printed on the device label): "
 CHECKING_CODE = "Checking the setup code..."
 CODE_ACCEPTED = "Setup code accepted."
@@ -176,6 +179,25 @@ CA_FILE_TOO_LARGE = (
 )
 CA_FILE_NOT_CERTIFICATE = (
     "This file is not a certificate. Ask IT for the certificate file and type its path again."
+)
+
+# ---------------------------------------------------------------------------
+# The phone page (web/, plan_v5 D3). tests/web_data.py copies every text the page uses into
+# web/index.html, so this file stays the only place for texts (review Q105).
+
+PAGE_UNSUPPORTED = (
+    "This browser can't set up the device. Open this page in Chrome on an Android phone."
+)
+PAGE_FIND_DEVICE = "Find the device"
+PAGE_CONNECTING = "Connecting to the device..."
+PAGE_CHECK_CODE = "Check the code"
+PAGE_CONNECT = "Connect"
+PAGE_START_OVER = "Start over"
+PAGE_STOPPED = "Setup stopped. Tap Start over to begin again."
+PAGE_NO_NETWORKS = "The device found no networks it can join. Move it closer and scan again."
+PAGE_ENTERPRISE = (
+    "This page can't join enterprise networks. Pick another network, or use the laptop "
+    "configurator."
 )
 
 # ---------------------------------------------------------------------------

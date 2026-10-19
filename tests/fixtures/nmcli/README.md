@@ -11,5 +11,6 @@ Outputs of `nmcli` used by `tests/test_nmcli_parsing.py`.
 | `connections.txt` | `nmcli -t -f NAME,UUID connection show` | two `teton-*` profiles among the owner's |
 | `device-show-*.txt` | `nmcli -t -f GENERAL.IP4-CONNECTIVITY,IP4.ADDRESS,IP4.GATEWAY device show <iface>` | full, limited, portal, no address |
 | `up-*.txt` | stderr of `nmcli --wait 45 connection up id teton-<ssid>` | one per failure reason, plus one unknown message |
+| `up-wrong-password-nm146.txt` | the same, with a wrong PSK | **recorded on laptop 1 (Step 6.3, review Q119)**: NetworkManager asks for the key again and `up` ends in `--wait`'s timeout (exit code 3), not with "Secrets were required" |
 | `edit-save-failed.txt` | output of `nmcli connection edit id …` with an invalid PSK piped in | **recorded on laptop 1 (Step 2.5)**, exit code 0 despite the error; a throwaway profile |
 | `wifi-connect-no-ssid.txt` | stderr of `nmcli device wifi connect <ssid>` | the SPEC §7 wording for `ssid_not_found` |

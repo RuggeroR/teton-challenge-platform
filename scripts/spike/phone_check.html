@@ -1,0 +1,146 @@
+<!doctype html>
+<!--
+  Phone capability check (throwaway spike, like the other files in scripts/spike/).
+  Answers, before we build the phone configurator (SPEC §9.3):
+    1. Does this Chrome have Web Bluetooth, in a secure context?
+    2. Does its WebCrypto have every primitive SPEC §5 needs: X25519, HKDF-SHA256,
+       HMAC-SHA256, AES-256-GCM?
+    3. Can it find the real device after [P], connect, read `info` and subscribe to
+       `session` and `status`?
+  Serve from laptop 1:  python3 -m http.server 8000 --bind <laptop-ip> --directory scripts/spike
+  Phone: chrome://flags/#unsafely-treat-insecure-origin-as-secure -> add http://<laptop-ip>:8000
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teton phone check</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  h1 { font-size: 1.2rem; }
+  button { font-size: 1rem; padding: 12px 16px; margin: 8px 0; width: 100%; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 6px 0; border-bottom: 1px solid #ddd; word-break: break-word; }
+  .ok::before { content: "✅ "; }
+  .fail::before { content: "❌ "; }
+  .info::before { content: "ℹ️ "; }
+  pre { white-space: pre-wrap; background: #f4f4f4; padding: 8px; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1>Teton phone check</h1>
+<button id="crypto">1. Check browser and crypto</button>
+<button id="ble">2. Find the device (press P on it first)</button>
+<ul id="out"></ul>
+<p>Send a screenshot of this list.</p>
+<script>
+const SERVICE = "18388b82-f3e5-40bb-a9b9-fd0f9d789b62";
+const CHARS = {
+  info: "a95e3738-82e8-4b9f-bdae-54b2ad44b843",
+  session: "3904babf-186b-4914-b120-559051a7400d",
+  command: "8f3ed082-9bcf-4ea0-8794-785bf52deb1f",
+  status: "7e81670a-c5d4-459d-8e6d-0925e5eaa9da",
+};
+const out = document.getElementById("out");
+
+function report(kind, text) {
+  const li = document.createElement("li");
+  li.className = kind;
+  li.textContent = text;
+  out.appendChild(li);
+}
+
+async function check(name, fn) {
+  try {
+    const detail = await fn();
+    report("ok", name + (detail ? ": " + detail : ""));
+  } catch (e) {
+    report("fail", name + ": " + (e && e.name ? e.name + " " : "") + (e && e.message ? e.message : e));
+  }
+}
+
+const bytes = (n) => crypto.getRandomValues(new Uint8Array(n));
+const equal = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+document.getElementById("crypto").onclick = async () => {
+  out.innerHTML = "";
+  const chrome = (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || "not Chrome";
+  report("info", "Browser: Chrome " + chrome + " — " + navigator.userAgent);
+  await check("Secure context", async () => {
+    if (!window.isSecureContext) throw new Error("no: set the Chrome flag for this address");
+  });
+  await check("Web Bluetooth API", async () => {
+    if (!navigator.bluetooth) throw new Error("navigator.bluetooth is missing");
+    return (await navigator.bluetooth.getAvailability()) ? "adapter available" : "API present, but no adapter / Bluetooth off";
+  });
+  await check("X25519 (key agreement)", async () => {
+    const a = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+    const b = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", a.publicKey));
+    const ab = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: b.publicKey }, a.privateKey, 256));
+    const ba = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: a.publicKey }, b.privateKey, 256));
+    if (raw.length !== 32 || !equal(ab, ba)) throw new Error("shared secrets differ");
+    return "32-byte public key, shared secrets match";
+  });
+  await check("HKDF-SHA256 (96 bytes)", async () => {
+    const ikm = await crypto.subtle.importKey("raw", bytes(32), "HKDF", false, ["deriveBits"]);
+    const okm = await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: new TextEncoder().encode("7K2MQX9D4HTRB8WZ"), info: bytes(64) },
+      ikm, 96 * 8);
+    return okm.byteLength + " bytes";
+  });
+  await check("HMAC-SHA256", async () => {
+    const key = await crypto.subtle.importKey("raw", bytes(32), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+    const data = bytes(64);
+    const tag = await crypto.subtle.sign("HMAC", key, data);
+    if (!(await crypto.subtle.verify("HMAC", key, tag, data))) throw new Error("own tag rejected");
+    if (await crypto.subtle.verify("HMAC", key, tag, bytes(64))) throw new Error("wrong data accepted");
+    return tag.byteLength + "-byte tag, verify ok";
+  });
+  await check("AES-256-GCM with AAD", async () => {
+    const key = await crypto.subtle.importKey("raw", bytes(32), "AES-GCM", false, ["encrypt", "decrypt"]);
+    const iv = bytes(12), aad = new TextEncoder().encode("teton-prov-v1"), msg = new TextEncoder().encode("hello");
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, key, msg);
+    const pt = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, key, ct));
+    if (!equal(pt, msg)) throw new Error("round trip failed");
+    return "round trip ok";
+  });
+};
+
+document.getElementById("ble").onclick = async () => {
+  let device;
+  await check("Find a Teton device", async () => {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+    return device.name || "(no name)";
+  });
+  if (!device) return;
+  try {
+    let server, service;
+    await check("Connect", async () => { server = await device.gatt.connect(); });
+    await check("Teton service", async () => { service = await server.getPrimaryService(SERVICE); });
+    for (const [name, uuid] of Object.entries(CHARS)) {
+      await check("Characteristic " + name, async () => {
+        const c = await service.getCharacteristic(uuid);
+        const p = c.properties;
+        return ["read", "write", "writeWithoutResponse", "notify"].filter((k) => p[k]).join(", ");
+      });
+    }
+    await check("Read info", async () => {
+      const c = await service.getCharacteristic(CHARS.info);
+      const text = new TextDecoder().decode(await c.readValue());
+      JSON.parse(text);
+      return text.length + " bytes: " + text;
+    });
+    for (const name of ["session", "status"]) {
+      await check("Subscribe to " + name, async () => {
+        await (await service.getCharacteristic(CHARS[name])).startNotifications();
+      });
+    }
+  } finally {
+    if (device.gatt.connected) device.gatt.disconnect();
+    report("info", "Disconnected");
+  }
+};
+</script>
+</body>
+</html>

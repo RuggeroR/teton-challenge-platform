@@ -6,6 +6,8 @@
 #   FramedTransport                     turns chunks into whole messages (framing.py)
 #   session.py / client.py              speak the protocol with whole messages
 
+import asyncio
+import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from typing import Protocol
@@ -13,7 +15,7 @@ from typing import Protocol
 import structlog
 
 from teton_common.framing import FramingError, Reassembler, frame
-from teton_common.protocol import CHUNK_SIZE_BYTES, Channel
+from teton_common.protocol import CHUNK_SIZE_BYTES, MAX_INFO_BYTES, Channel
 
 log = structlog.get_logger()
 
@@ -36,6 +38,63 @@ def check_chunk(channel: Channel, data: bytes, allowed: frozenset[Channel], side
         raise TransportError(f"the {side} cannot send on {channel}")
     if len(data) > CHUNK_SIZE_BYTES:
         raise TransportError(f"chunks are at most {CHUNK_SIZE_BYTES} bytes")
+
+
+def check_info(data: bytes) -> None:
+    """`info` must fit in one GATT read (plan_v5 S2); every device transport checks it in
+    set_info, so an oversized value fails in tests instead of on hardware (review Q86)."""
+    if len(data) > MAX_INFO_BYTES:
+        raise TransportError(f"info is at most {MAX_INFO_BYTES} bytes")
+
+
+class Inbox:
+    """Incoming chunks for one end, delivered in order by a background task.
+
+    Whoever receives (the memory transport, or bless's synchronous BLE write handler) only
+    calls put(); the task awaits each receiver in arrival order, so a slow receiver never
+    lets a later chunk overtake an earlier one (review Q83).
+    """
+
+    def __init__(self, receives: frozenset[Channel], side: str) -> None:
+        self._receives = receives
+        self._side = side
+        self._receivers: dict[Channel, Receiver] = {}
+        self._queue: asyncio.Queue[tuple[Channel, bytes]] = asyncio.Queue()
+        self._task: asyncio.Task[None] | None = None
+
+    def on_receive(self, channel: Channel, cb: Receiver) -> None:
+        if channel not in self._receives:
+            raise TransportError(f"the {self._side} does not receive on {channel}")
+        self._receivers[channel] = cb
+
+    def put(self, channel: Channel, chunk: bytes) -> None:
+        self._queue.put_nowait((channel, chunk))
+
+    def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._deliver())
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        self._queue = asyncio.Queue()  # chunks of an old connection never reach a new one
+        if task is None:
+            return
+        task.cancel()
+        if task is not asyncio.current_task():
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _deliver(self) -> None:
+        while True:
+            channel, chunk = await self._queue.get()
+            cb = self._receivers.get(channel)
+            if cb is None:
+                continue  # nobody listening, like a notify nobody subscribed to
+            try:
+                await cb(chunk)
+            except Exception:
+                # One failing callback must not silently stop all later deliveries.
+                log.exception("receiver_failed", side=self._side, channel=channel)
 
 
 class DeviceTransport(Protocol):

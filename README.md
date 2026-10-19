@@ -1,7 +1,7 @@
 # teton-challenge-platform
 Secure headless Wi-Fi provisioning for Ubuntu devices over BLE, with encrypted credential exchange, built in Python.
 
-> The Bluetooth demo steps and troubleshooting will be added as the implementation lands. The simulation below runs on any Linux machine today.
+> Two ways to try it: the **simulation** on any Linux machine (below), or the **real run** with laptop A as the device and an Android phone as the configurator ("Run it for real"). The laptop configurator over Bluetooth (`teton-configurator` without `--simulate`) is built and unit-tested, but has not run against hardware: the second laptop's disk failed during the challenge (plan_v5 D3).
 
 ## Try it without hardware (simulation)
 
@@ -44,7 +44,27 @@ Things to try:
 - Restart the device after connecting it: it stays green and doesn't advertise. The simulation keeps its state in `~/.local/state/teton-device-sim` (change it with `--state-dir PATH`), apart from a real device's.
 - A second configurator can't find or connect to the device while the first is connected, as with Bluetooth.
 
-The device's logs are JSON lines on stderr (the screen is stdout). To keep them apart: `teton-device run --simulate 2> device.log`. Add `--verbose` to either command for debug logs. Without `--simulate`, both commands say "BLE transport not available yet" until the Bluetooth transports are built.
+The device's logs are JSON lines on stderr (the screen is stdout). To keep them apart: `teton-device run --simulate 2> device.log`. Add `--verbose` to either command for debug logs. Without `--simulate`, both commands use Bluetooth, and the device uses NetworkManager for Wi-Fi.
+
+## Run it for real: laptop A + an Android phone
+
+The device runs on laptop A with real Bluetooth and NetworkManager. The configurator is a web page in Chrome on an Android phone (`web/`), which speaks the same encrypted protocol over Web Bluetooth. The phone can also be the Wi-Fi hotspot the device joins.
+
+**On the phone, once:**
+1. Chrome must be recent (Web Bluetooth and X25519 in WebCrypto; `scripts/spike/phone_check.html` checks both).
+2. The phone and laptop A on the same Wi-Fi network for loading the page. Web Bluetooth only runs on HTTPS pages or with a Chrome flag, so open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add `http://<laptop-A-ip>:8000`, set it to **Enabled** and relaunch Chrome. Remove it after the demo: a page loaded over plain HTTP could be replaced by anyone on the same network.
+3. Allow Chrome "Nearby devices" (or location, on older Android) when it asks.
+
+**Laptop A, two terminals:**
+
+```bash
+teton-device run --verbose 2> ~/device.log          # the device; press P to open the pairing window
+python3 -m http.server 8000 --bind <laptop-A-ip> --directory web   # serves the phone page
+```
+
+**On the phone:** open `http://<laptop-A-ip>:8000`, press **P** on laptop A, tap **Find the device** and pick `Teton-XXXX`. Type the setup code shown on laptop A, pick your network from the device's scan list, type its password. The page shows "Connected. IP …, internet OK." and laptop A's LED turns green.
+
+The page supports what the challenge needs: WPA2/WPA3 password networks, retries after a wrong code or password. Hidden and Enterprise networks need the laptop configurator.
 
 ## Requirements
 
@@ -53,7 +73,7 @@ The device's logs are JSON lines on stderr (the screen is stdout). To keep them 
 | Role | What you need |
 |---|---|
 | Teton Device (laptop A) | Bluetooth 4.2+ adapter that supports the LE **peripheral** role, and a Wi-Fi card managed by NetworkManager |
-| Configurator (laptop B) | Bluetooth 4.2+ adapter that supports the LE **central** role |
+| Configurator (laptop B) | Bluetooth 4.2+ adapter that supports the LE **central** role. **Or** an Android phone with a recent Chrome (the phone page) |
 | Test network (WPA2/WPA3-Personal) | An Android phone hotspot (any access point works) |
 | Test network (WPA2-Enterprise, optional) | A laptop whose Wi-Fi card supports **AP mode**, running `hostapd` |
 
@@ -63,8 +83,9 @@ The device's logs are JSON lines on stderr (the screen is stdout). To keep them 
 |---|---|---|---|
 | Laptop A (laptop 1) | **Teton Device**: receives the credentials and joins Wi-Fi | **24.04 LTS** (the reference platform for BlueZ peripheral mode and NetworkManager) | 3.12 |
 | Laptop B (laptop 2) | **Configurator**, and the optional WPA2-Enterprise test AP | **24.04 or 26.04 LTS** | 3.12 on 24.04, 3.14 on 26.04 |
+| Phone | **Configurator** (`web/`) for the hardware runs, because laptop 2's disk failed (plan_v5 D3) | Android, Chrome | n/a |
 
-The code needs Python 3.12 or newer. Older Ubuntu releases are not supported.
+The code needs Python 3.12 or newer. Older Ubuntu releases are not supported. **Not tested:** Python 3.14 and Ubuntu 26.04 (laptop 2 was lost before its install check, and CI is deferred); they are expected to work.
 
 The device has no keyboard input beyond a few simulated buttons, pressed as single keys in the `teton-device run` terminal: **P** opens a 5-minute pairing window (the device is only visible over Bluetooth during it), **R** twice within 3 seconds resets it, **S** shows its status, and **Q** or Ctrl+C turns it off. A status line at the bottom acts as its LED.
 
@@ -114,11 +135,26 @@ command -v hostapd                     # /usr/sbin/hostapd (only needed for the 
 
 ### Tested on
 
-| | Laptop 1 (Teton Device) |
+The full run on this hardware, with screenshots, the device log and a `btmon` capture, is in [`docs/evidence/`](docs/evidence/README.md).
+
+| | Laptop 1 (Teton Device) | Phone (configurator) |
+|---|---|---|
+| OS | Ubuntu 24.04.5 LTS, kernel 7.0.0-38-generic (HWE) | Pixel 9, Android 17, Chrome 155.0.8059.81 |
+| Python | 3.12.3 | n/a |
+| BlueZ | 5.72 (Intel adapter, central + peripheral roles) | n/a |
+| NetworkManager | 1.46.0 | n/a |
+| Wi-Fi | Intel Meteor Lake CNVi (`iwlwifi`), AP mode supported | the hotspot |
+| iw / hostapd | 6.7 / 2.10 | n/a |
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
 |---|---|
-| OS | Ubuntu 24.04.5 LTS, kernel 7.0.0-38-generic (HWE) |
-| Python | 3.12.3 |
-| BlueZ | 5.72 (Intel adapter, central + peripheral roles) |
-| NetworkManager | 1.46.0 |
-| Wi-Fi | Intel Meteor Lake CNVi (`iwlwifi`), AP mode supported |
-| iw / hostapd | 6.7 / 2.10 |
+| The laptop's Bluetooth name shows as `Teton-XXXX` | While the device advertises, `bless` sets the adapter's alias to the device's name, and puts it back when advertising stops. After a crash or `kill -9` it stays: `bluetoothctl reset-alias` restores it |
+| A line like `/org/bluez/Teton9A2C/advertisement1: Released!` on the device's screen | BlueZ dropped the advertisement (for example the adapter was turned off) and `bless` printed it. Harmless; press **P** again once Bluetooth is back |
+| The phone or configurator can't connect, and the kernel log shows `Opcode 0x2036 failed: -16` | The Ubuntu Bluetooth settings panel made the adapter discoverable, which competes for advertising. Close the settings panel during runs |
+| nRF Connect hangs on the first connection attempt, with nothing in the device's logs | Restart the nRF Connect app |
+| The configurator says "Bluetooth is off or missing on this computer" | Turn Bluetooth on (`rfkill list`, `bluetoothctl power on`). Run with `--verbose` to see the reason in the logs |
+| The phone page says "This browser can't set up the device" | It needs Chrome on Android, opened at the address you put in the Chrome flag (`http://`, not `https://`, and the same port) |
+| The phone's picker finds nothing | Press **P** on laptop A first: the device is only visible while its LED blinks blue. Close the Ubuntu Bluetooth settings panel on laptop A |
+| `teton-device: no Bluetooth adapter found` | No adapter, or it is blocked: check `rfkill list` and `bluetoothctl show` (see "Check your machine") |
