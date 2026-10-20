@@ -31,7 +31,7 @@ The setup code during the run was `JME8-43X3-QC22-ECYY`. The [R][R] at the end o
 | File | Shows |
 |---|---|
 | `phone-01-wrong-code-a.png`, `-b.png` | The wrong code typed, then "The setup code is wrong, or this is not the right device…" (MUST #4) |
-| `phone-02-networks.png` | "Setup code accepted." and the device's scan list, with Coldspot first; the names of neighbouring networks are blurred |
+| `phone-02-networks.jpg` | "Setup code accepted." and the device's scan list, with Coldspot first; the names of neighbouring networks are blurred |
 | `phone-03-wrong-password-a.png`, `-b.png` | The wrong password typed (masked), then "The Wi-Fi password was not accepted. Check it and try again." with *Try again* (MUST #3) |
 | `phone-04-connected.png` | "Connected. IP 10.195.95.40, internet OK." (MUST #2) |
 | `Led-red-teton-device.png` | Laptop 1's terminal: the code and QR, and the status line "LED red, last attempt failed: wrong_password" |
@@ -57,3 +57,22 @@ grep -ci -e 'test-Teton' -e 'JME843X3QC22ECYY' -e 'JME8-43X3-QC22-ECYY' docs/evi
 |---|---|
 | `spike-peripheral.log`, `spike-peripheral-2.log` | `scripts/spike/ble_peripheral.py` on laptop 1, with `bless` patched to log BlueZ's read and write options (MTU 517, the client's device path) |
 | `spike-connect.btsnoop`, `spike-connect-2.btsnoop` | The `btmon` captures of those sessions with nRF Connect on the phone: no pairing (0 SMP packets), advertising ending on connect and coming back after the disconnect (plan_v5 S1–S4) |
+
+## Acceptance checklist (SPEC §12)
+
+Every criterion of SPEC §12, and what shows it is met. "Tests" means `pytest` on any machine; "Evidence" means a file in this folder.
+
+| # | Criterion | Status | Shown by |
+|---|---|---|---|
+| MUST 1 | Provisioned onto a phone hotspot (WPA2-PSK) with only the guided configurator and [P]; nothing advertised before [P], advertising stops when the window expires | ✅ with the phone page as the configurator (plan_v5 D3) | Evidence: the run above (`device-run.log` 18:16:45–18:20:40, `phone-0*`); window expiry on hardware: IMPLEMENTATION_PLAN Step 6.1 Results rows 1, 4, 5. Tests: `test_end_to_end.py`, `test_service.py`, `test_buttons.py` |
+| MUST 2 | `connected` with an IP and confirmed internet | ✅ IP 10.195.95.40, internet `full` | Evidence: `phone-04-connected.png`, `nmcli-teton.png`, `Led-green-teton-device.png` |
+| MUST 3 | Wrong password → `wrong_password`, retry in the same session works | ✅ | Evidence: `phone-03-wrong-password-*.png`, `Led-red-teton-device.png`, log 18:19:47–18:20:40. Tests: `test_end_to_end.py::test_wrong_password_then_retry_in_the_same_session`, `test_nmcli_parsing.py` (real NM 1.46 fixture) |
+| MUST 4 | Wrong setup code fails the handshake with a clear message; no credentials sent | ✅ | Evidence: `phone-01-wrong-code-*.png`, log 18:18:28. Tests: `test_crypto.py::test_wrong_code_is_caught_by_the_configurator_before_it_sends_anything`, `test_end_to_end.py::test_wrong_code_then_retype_sends_no_credentials_before_the_good_code` |
+| MUST 5 | A `btmon` capture shows no plaintext password, saved here | ✅ password, SSID and setup code all absent | Evidence: `run-psk.btsnoop` + `scripts/check_capture.py` (see Checks above) |
+| MUST 6 | Unit tests pass: setup code, crypto (tamper, replay, wrong code), framing, messages, state machine, nmcli parsing, log redaction, buttons | ✅ | `test_setup_code.py`, `test_crypto.py`, `test_framing.py`, `test_messages.py`, `test_state.py`, `test_nmcli_parsing.py`, `test_log.py`, `test_no_secrets_in_logs.py`, `test_buttons.py` |
+| MUST 7 | README, ARCHITECTURE.md and evidence in the repo | ✅ | [`README.md`](../../README.md), [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md), this folder |
+| SHOULD 8 | `--simulate` runs the full flow on one machine; a two-process smoke test in CI | ⚠️ simulation and the two-process smoke test ✅; **CI deferred** (review Q113) | README "Try it without hardware"; `test_cli.py`, `test_sim_transport.py` |
+| SHOULD 9 | WPA2-Enterprise PEAP verified against `hostapd` | ❌ not possible without laptop 2 (review Q112) | Covered in software only: `test_wifi_fake.py`, `test_nmcli_parsing.py`, `test_end_to_end.py` (PEAP with and without a CA) |
+| SHOULD 10 | systemd unit, polkit rule, preflight script | ❌ deferred (review Q113) | Described in [ARCHITECTURE.md §11](../ARCHITECTURE.md#11-fleet-and-ota-notes) |
+| COULD 11 | The phone page | ✅ built, and used as the configurator for the hardware run (plan_v5 D3) | `web/`, `test_web.py`, the run above |
+| COULD 12 | EAP-TLS, `.deb`, Prometheus metrics, Smith enrollment stub | ❌ not built | Described in [ARCHITECTURE.md §10–§11](../ARCHITECTURE.md#10-scaling-to-200-devices-in-a-hospital-wing) |

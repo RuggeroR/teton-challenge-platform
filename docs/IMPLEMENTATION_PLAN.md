@@ -694,6 +694,8 @@ Everything as expected except MUST #3: the wrong password was reported as `timeo
 
 ## Phase 8: Docs and writeup (MUST)
 
+> **Drafted 2026-10-19 for review:** `docs/ARCHITECTURE.md` written; README updated (tests, repository map, Enterprise and laptop-2 status, troubleshooting rows); the acceptance checklist added to `docs/evidence/README.md`; `web/README.md` replaced its skeleton comment. Step 8.1's Verify ("follow the README on the second laptop") can't be done without laptop 2.
+
 ### Step 8.1: README
 
 - **Goal:** someone at Teton can reproduce everything from a stock Ubuntu install (24.04 for the device, 24.04 or 26.04 for the configurator).
