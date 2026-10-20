@@ -25,7 +25,7 @@ This is the submission writeup. It explains what was built, why each choice was 
 - **Crypto:** ephemeral X25519 key exchange, HKDF-SHA256 salted with the setup code, HMAC key confirmation in both directions, then AES-256-GCM with per-direction keys and sequence numbers. It uses only the `cryptography` library in Python and WebCrypto in the browser.
 - **Physical gate:** the device advertises only for 5 minutes after someone presses its pairing button [P], and it never accepts typed input.
 - **Feedback:** the device joins Wi-Fi through NetworkManager, checks for an IP address, the interface's connectivity and the gateway, then reports `connected` (IP, internet status) or `failed` with one of seven reasons. Each reason becomes one plain-language sentence for the technician, and the same session allows a retry.
-- **Proven on hardware** (2026-10-19): laptop 1 (Ubuntu 24.04) as the device and a Pixel 9 running the phone page as the configurator. A wrong setup code was rejected. A wrong hotspot password gave `wrong_password` and a retry in the same session. The correct password gave `connected` with internet `full`. A `btmon` capture of the whole run contains no password, SSID or setup code ([evidence](evidence/README.md)).
+- **Proven on hardware** (2026-10-19): laptop 1 (Ubuntu 24.04) as the device and an Android phone running the phone page as the configurator. A wrong setup code was rejected. A wrong hotspot password gave `wrong_password` and a retry in the same session. The correct password gave `connected` with internet `full`. A `btmon` capture of the whole run contains no password, SSID or setup code ([evidence](evidence/README.md)).
 - **Tests:** about 800 pytest tests, including Node tests for the phone page. They run without hardware, using an in-memory transport, a Unix-socket simulation and a fake Wi-Fi backend.
 
 ## 2. Problem and constraints
@@ -39,7 +39,7 @@ A configurator (a phone or a second laptop) must send Wi-Fi credentials to an Ub
 | C3 | No plaintext credentials over any wireless channel | Encryption with an *authenticated* key exchange. BLE "Just Works" pairing alone doesn't qualify |
 | C4 | Usable by a non-developer | Guided steps, plain-language errors, no flags or terminals on the configurator side |
 
-The role is Software Engineer, Fleet, so I also treated "what happens at 200 devices" and "how does this hand off to the fleet platform (Smith)" as first-class questions (§10, §11).
+The role is Software Engineer, Fleet, so I also treated "what happens at 200 devices" and "how does this hand off to the fleet platform" as first-class questions (§10, §11).
 
 ## 3. Channel choice: BLE GATT
 
@@ -47,7 +47,7 @@ The full comparison of ten channels is in [research/channels.md](research/channe
 
 **Why BLE.** It is the only option that meets all four constraints on stock laptop hardware **and** keeps a live feedback path while the device joins Wi-Fi. The setup link doesn't borrow the Wi-Fi radio, so the device can tell the technician *why* a join failed and take a corrected password in the same session. Phones support it natively, and Chrome on Android drives it from a web page with no app install, which is what rescued the hardware run when the second laptop's disk failed (§9). It is also the industry default for headless onboarding (Matter commissioning, ESP-IDF provisioning, HomeKit).
 
-**What it costs.** Range is a few metres, which in a hospital is arguably a feature. Throughput is small, so messages are split into 20-byte chunks. Peripheral mode on Linux depends on the adapter and BlueZ version, so the riskiest part was tested first: a hardware spike on day one, before any protocol code (plan_v5, S1–S4).
+**What it costs.** Range is a few metres, which in a hospital is arguably a feature. Throughput is small, so messages are split into 20-byte chunks. Peripheral mode on Linux depends on the adapter and BlueZ version, so the riskiest part was tested first: a hardware spike on day one, before any protocol code.
 
 **Alternatives considered and rejected:**
 
@@ -68,7 +68,7 @@ Encryption alone isn't enough. An unauthenticated key exchange can be man-in-the
 
 **Why 80 bits and not a 6-digit PIN.** An attacker who poses as the configurator receives the device's confirmation tag and can then guess codes offline. With 80 random bits that is infeasible. A 6-digit PIN would need a PAKE (SPAKE2 or SRP) to be safe, which is the documented upgrade path. A passive eavesdropper can't attack the code at all, because it never learns the ECDH secret.
 
-**On top: a physical pairing window.** The device advertises only for 300 s after [P] is pressed (plan_v5, D2). On its own a window doesn't stop a MITM, but it shrinks the attack surface: an attacker needs the code *and* must be in radio range during the few minutes after someone physically touched the device. With 200 devices it also keeps the airwaves quiet (§10). A double press of [R] resets the device and **rotates the code**, which is the answer to "the label was photographed".
+**On top: a physical pairing window.** The device advertises only for 300 s after [P] is pressed. On its own a window doesn't stop a MITM, but it shrinks the attack surface: an attacker needs the code *and* must be in radio range during the few minutes after someone physically touched the device. A double press of [R] resets the device and **rotates the code**, which is the answer to "the label was photographed".
 
 **Alternatives for devices without pre-shared material:**
 
@@ -84,7 +84,7 @@ Encryption alone isn't enough. An unauthenticated key exchange can be man-in-the
 
 ### 5.1 Handshake and session
 
-Over the plaintext `session` characteristic (SPEC §5):
+Over the plaintext `session` characteristic:
 
 ```
 configurator                                              device
@@ -151,7 +151,7 @@ Configurator (laptop CLI or phone page)            Teton Device (laptop A)
 - **One protocol implementation, many transports.** The handshake, crypto, framing and messages live in `teton_common` and never know whether the bytes go over BLE, a Unix socket (`--simulate`) or memory (tests). The transport interface is deliberately thin: start, advertise on/off, `info`, send and receive 20-byte chunks. One contract test suite runs against each implementation.
 - **Side effects behind interfaces.** The radio, Wi-Fi (`WifiBackend`), buttons, the clock and randomness are injected. The device's whole behaviour runs in pytest, including the 5-minute window and the 45 s timeouts, with no real sleeps.
 - **The device is the authority.** It owns the state machine, verifies everything and decides success. The configurator is a thin client, which is why a second, very different configurator (the phone page) could be added in a day without touching the device.
-- **Small, boring choices.** JSON messages, fixed 20-byte chunks (the minimum every BLE link supports, so no MTU negotiation), `nmcli` instead of D-Bus, a terminal status line as the "LED". Each is easy to explain and debug. §9 says what production would change.
+- **Small, boring choices.** JSON messages, fixed 20-byte chunks (the minimum every BLE link supports), `nmcli` instead of D-Bus, a terminal status line as the "LED". Each is easy to explain and debug. §9 says what production would change.
 
 ### 6.2 Device state machine
 
@@ -164,7 +164,7 @@ UNPROVISIONED ──[P]──► ADVERTISING ──handshake ok──► SESSION
       └──────────────────────[R][R] reset: delete Teton profiles, new code ◄───────── PROVISIONED
 ```
 
-There are five states and nothing else (DESIGN §4):
+There are five states and nothing else:
 - A failure isn't a state: the device goes back to `SESSION_ESTABLISHED`, and the LED shows the reason in red.
 - The pairing window is a timer, not a state. When it expires mid-session, the session may still finish.
 - On success the device sends `connected`, saves `provisioned` and stops advertising **before** the configurator disconnects. The spike showed that BlueZ re-enables advertising on disconnect otherwise.
@@ -203,7 +203,7 @@ All the texts live in one file (`ui_text.py`), which the phone page copies under
 | No secrets in logs | One full run rendered by the real logging setup at DEBUG; asserts that no password, setup code, key (caught by spies in the crypto module), ciphertext or CA line appears, and that error codes and SSIDs stay visible |
 | Transports | One contract suite against the memory and socket pairs; the BLE transports against fakes shaped like `bless` and `bleak` |
 | Phone page | Node runs `protocol.js` against vectors generated by the Python code, and runs the page's client against the real device service over the simulation socket |
-| Hardware | The BLE spike (Step 0.2), BLE transport checks with nRF Connect (Step 6.1), and the provisioning run with the phone (Step 6.3). See [evidence/README.md](evidence/README.md) |
+| Hardware | The BLE spike, BLE transport checks with nRF Connect, and the provisioning run with the phone. See [evidence/README.md](evidence/README.md) |
 
 `--simulate` runs the whole product in two terminals on any Linux machine. It's the fastest way for a reviewer to try it (see the [README](../README.md)).
 
@@ -211,7 +211,7 @@ All the texts live in one file (`ui_text.py`), which the phone page copies under
 
 Stated plainly, because they matter more than the polish:
 
-- **The laptop configurator never ran against real hardware.** Laptop 2's disk failed on the day of the hardware runs (plan_v5, D3). `ble_client.py` is unit-tested against a `bleak`-shaped fake and the CLI is tested end to end over the simulation socket, but no real BLE run. The phone page took its place and ran the full flow on hardware.
+- **The laptop configurator never ran against real hardware.** Laptop 2's disk failed on the day of the hardware runs. `ble_client.py` is unit-tested against a `bleak`-shaped fake and the CLI is tested end to end over the simulation socket, but no real BLE run. The phone page took its place and ran the full flow on hardware.
 - **WPA2-Enterprise (PEAP) is tested only in software**, with the fake backend and `nmcli` fixtures. The `hostapd` test AP needed the lost laptop. The phone page doesn't offer Enterprise or hidden networks; the laptop CLI does.
 - **Not tested: Python 3.14 and Ubuntu 26.04 on the configurator side. There's also no CI** (deferred with the rest of Phase 7 to get the hardware run done first). The code uses nothing newer than 3.12.
 - **Demo-grade operations:**

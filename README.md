@@ -3,7 +3,7 @@ Secure headless Wi-Fi provisioning for Ubuntu devices over BLE, with encrypted c
 
 **Read next:** [the architecture writeup](docs/ARCHITECTURE.md) (channel choice, how credentials are protected, scaling to 200 devices) and [the evidence of the hardware run](docs/evidence/README.md) (screenshots, device log, `btmon` capture).
 
-> Two ways to try it: the **simulation** on any Linux machine (below), or the **real run** with laptop A as the device and an Android phone as the configurator ("Run it for real"). The laptop configurator over Bluetooth (`teton-configurator` without `--simulate`) is built and unit-tested, but has not run against hardware: the second laptop's disk failed during the challenge (plan_v5 D3).
+> Two ways to try it: the **simulation** on any Linux machine (below), or the **real run** with laptop A as the device and an Android phone as the configurator ("Run it for real"). The laptop configurator over Bluetooth (`teton-configurator` without `--simulate`) is built and unit-tested, but has not run against hardware: the second laptop's disk failed during the challenge preparation.
 
 ## Try it without hardware (simulation)
 
@@ -48,13 +48,13 @@ Things to try:
 
 The device's logs are JSON lines on stderr (the screen is stdout). To keep them apart: `teton-device run --simulate 2> device.log`. Add `--verbose` to either command for debug logs. Without `--simulate`, both commands use Bluetooth, and the device uses NetworkManager for Wi-Fi.
 
-## Run it for real: laptop A + an Android phone
+## Run it for real: laptop A + an Android phone (tested on real hardware)
 
 The device runs on laptop A with real Bluetooth and NetworkManager. The configurator is a web page in Chrome on an Android phone (`web/`), which speaks the same encrypted protocol over Web Bluetooth. The phone can also be the Wi-Fi hotspot the device joins.
 
 **On the phone, once:**
 1. Chrome must be recent (Web Bluetooth and X25519 in WebCrypto; `scripts/spike/phone_check.html` checks both).
-2. The phone and laptop A on the same Wi-Fi network, only to load the page once (like installing an app). Then turn on the phone's hotspot and keep the tab open: from here the page needs only Bluetooth, and the phone and the device share no network until the device joins the one you send it (challenge constraint 1, plan_v5 Q114). Web Bluetooth only runs on HTTPS pages or with a Chrome flag, so open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add `http://<laptop-A-ip>:8000`, set it to **Enabled** and relaunch Chrome. Remove it after the demo: a page loaded over plain HTTP could be replaced by anyone on the same network.
+2. The phone and laptop A on the same Wi-Fi network, only to load the page once (like installing an app). Then turn on the phone's hotspot and keep the tab open: from here the page needs only Bluetooth, and the phone and the device share no network until the device joins the one you send it (challenge constraint 1). Web Bluetooth only runs on HTTPS pages or with a Chrome flag, so open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add `http://<laptop-A-ip>:8000`, set it to **Enabled** and relaunch Chrome. Remove it after the demo: a page loaded over plain HTTP could be replaced by anyone on the same network.
 3. Allow Chrome "Nearby devices" (or location, on older Android) when it asks.
 
 **Laptop A, two terminals:**
@@ -66,7 +66,7 @@ python3 -m http.server 8000 --bind <laptop-A-ip> --directory web   # serves the 
 
 **On the phone:** open `http://<laptop-A-ip>:8000`, press **P** on laptop A, tap **Find the device** and pick `Teton-XXXX`. Type the setup code shown on laptop A, pick your network from the device's scan list, type its password. The page shows "Connected. IP …, internet OK." and laptop A's LED turns green.
 
-The page supports what the challenge needs: WPA2/WPA3 password networks, retries after a wrong code or password. Hidden and Enterprise networks need the laptop configurator.
+The page supports what the challenge needs: WPA2/WPA3 password networks, retries after a wrong code or password. Hidden and Enterprise networks need the laptop configurator (not tested on real hardware and networks).
 
 ## Run the tests
 
@@ -76,7 +76,7 @@ pytest                                   # about 800 tests, no hardware needed
 ruff check . && ruff format --check .
 ```
 
-The tests use an in-memory transport, the simulation socket and a fake Wi-Fi backend, so they never touch Bluetooth or NetworkManager. If `node` (18+) is on the PATH, pytest also runs the phone page's JavaScript against vectors from the Python code; otherwise those tests are skipped.
+The tests use an in-memory transport, the simulation socket and a fake Wi-Fi backend, so they never touch Bluetooth or NetworkManager. If `node` is on the PATH, pytest also runs the phone page's JavaScript against vectors from the Python code; otherwise those tests are skipped.
 
 ## What's in the repository
 
@@ -99,7 +99,7 @@ The tests use an in-memory transport, the simulation socket and a fake Wi-Fi bac
 | Teton Device (laptop A) | Bluetooth 4.2+ adapter that supports the LE **peripheral** role, and a Wi-Fi card managed by NetworkManager |
 | Configurator (laptop B) | Bluetooth 4.2+ adapter that supports the LE **central** role. **Or** an Android phone with a recent Chrome (the phone page) |
 | Test network (WPA2/WPA3-Personal) | An Android phone hotspot (any access point works) |
-| Test network (WPA2-Enterprise) | Not provided: the planned `hostapd` test AP needed the second laptop, which was lost (plan_v5 Q112). Enterprise is tested in software only |
+| Test network (WPA2-Enterprise) | Not provided: the planned `hostapd` test AP needed the second laptop, which had a disk failure during testing. Enterprise is tested in software only |
 
 ### Roles and Ubuntu versions
 
@@ -107,7 +107,7 @@ The tests use an in-memory transport, the simulation socket and a fake Wi-Fi bac
 |---|---|---|---|
 | Laptop A (laptop 1) | **Teton Device**: receives the credentials and joins Wi-Fi | **24.04 LTS** (the reference platform for BlueZ peripheral mode and NetworkManager) | 3.12 |
 | Laptop B (laptop 2) | **Configurator** (`teton-configurator`); built and unit-tested, not run on hardware | **24.04 or 26.04 LTS** | 3.12 on 24.04, 3.14 on 26.04 |
-| Phone | **Configurator** (`web/`) for the hardware runs, because laptop 2's disk failed (plan_v5 D3) | Android, Chrome | n/a |
+| Phone | **Configurator** (`web/`) for the hardware runs, because laptop 2's disk failed | Android, Chrome | n/a |
 
 The code needs Python 3.12 or newer. Older Ubuntu releases are not supported. **Not tested:** Python 3.14 and Ubuntu 26.04 (laptop 2 was lost before its install check, and CI is deferred); they are expected to work.
 
